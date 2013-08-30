@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2
+// @version     0.2.0.1
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -10646,7 +10646,7 @@ var xch = (function () {
 
 							// Remove
 							for (i = 0, j = posts.length; i < j; ++i) {
-								posts[i].instances[0].container.remove();
+								posts[i].instances[0].container.detach();
 							}
 
 						}
@@ -11231,7 +11231,7 @@ var xch = (function () {
 						// Expand
 						var p = data.object.parent();
 						if (p.hasClass("active")) {
-							data.instance.container.children(".post").children(".body").addClass("full");
+							data.instance.container.children(".post").children(".post_body").addClass("full");
 							p.addClass("shrink loaded").removeClass("active");
 						}
 						else {
@@ -11247,7 +11247,7 @@ var xch = (function () {
 
 					if (par.hasClass("loaded")) {
 						// Toggle
-						var body = event.data.instance.container.children(".post").children(".body");
+						var body = event.data.instance.container.children(".post").children(".post_body");
 						if (body.hasClass("full")) {
 							// Shrink
 							var h1 = body.next().outerHeight();
@@ -11878,9 +11878,8 @@ var xch = (function () {
 									)
 								)
 								.append(
-									style.e("span", "post_notification_text").html(
-										this.thread.posts_omitted + " repl" + (this.thread.posts_omitted == 1 ? "y" : "ies") + (this.thread.images_omitted > 0 ? (" and " + this.thread.images_omitted + " image" + (this.thread.images_omitted == 1 ? "" : "s")) : "") + " omitted"
-									)
+									style.e("span", "post_notification_text")
+									.attr("omitted_value", this.thread.posts_omitted + " repl" + (this.thread.posts_omitted == 1 ? "y" : "ies") + (this.thread.images_omitted > 0 ? (" and " + this.thread.images_omitted + " image" + (this.thread.images_omitted == 1 ? "" : "s")) : ""))
 								)
 							)
 						);
@@ -12563,6 +12562,13 @@ var xch = (function () {
 							ref_container.before(h);
 							h.after(blc);
 						}
+					}
+
+					// Remove thread expansion notification
+					var n_container = c.find(".post_notifications");
+					n_container.children(".post_notification.omitted").remove();
+					if (n_container.children().length == 0) {
+						n_container.remove();
 					}
 
 					// Add to list
@@ -13896,7 +13902,11 @@ var xch = (function () {
 						text: {
 							too_long: "Message too long",
 							too_long_expand: "Expand message",
-							too_long_shrink: "Shrink message"
+							too_long_shrink: "Shrink message",
+							omitted_hidden_prefix: "",
+							omitted_hidden_suffix: " omitted",
+							omitted_visible_prefix: "Hide ",
+							omitted_visible_suffix: ""
 						},
 						colors: {
 							text: "#8899aa",
@@ -14742,6 +14752,8 @@ var xch = (function () {
 						"$.post_notification.truncated>$.post_notification_message>$.post_notification_text:before{content:\"<<!escape_string:post.notifications.text.too_long>>\"}\n" +
 						"$.post_notification.truncated.expand>$.post_notification_message>$.post_notification_text:before{content:\"<<!escape_string:post.notifications.text.too_long_expand>>\"}\n" +
 						"$.post_notification.truncated.shrink>$.post_notification_message>$.post_notification_text:before{content:\"<<!escape_string:post.notifications.text.too_long_shrink>>\"}\n" +
+						"$.post_notification.omitted>$.post_notification_message>$.post_notification_text:before{content:\"<<!escape_string:post.notifications.text.omitted_hidden_prefix>>\" attr(omitted_value) \"<<!escape_string:post.notifications.text.omitted_hidden_suffix>>\";}\n" +
+						"$.post_notification.omitted.shrink>$.post_notification_message>$.post_notification_text:before{content:\"<<!escape_string:post.notifications.text.omitted_visible_prefix>>\" attr(omitted_value) \"<<!escape_string:post.notifications.text.omitted_visible_suffix>>\";}\n" +
 
 						"$.post_notification.loaded>$.post_notification_message>$.post_notification_progress{display:none;}\n" +
 						"$.post_notification_progress{position:absolute;left:0px;top:0;right:0px;bottom:0;opacity:<<post.notifications.progress.opacity>>;}\n" +
