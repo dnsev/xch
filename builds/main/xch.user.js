@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.1
+// @version     0.2
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -49,6 +49,7 @@ var xch = (function () {
 	var location = null;
 	var info = null;
 	var content = null;
+	var api = null;
 
 	// Vars
 	var xch = {
@@ -267,6 +268,9 @@ var xch = (function () {
 					// Location
 					location = new xch.Location();
 
+					// API
+					api = new xch.API();
+
 					// Communication
 					communication = new xch.Communication();
 
@@ -302,6 +306,9 @@ var xch = (function () {
 							// Content
 							content = new xch.Content(context);
 							content.parse(context);
+						}
+						else {
+							// TODO : Delete some stuff
 						}
 					});
 
@@ -339,7 +346,7 @@ var xch = (function () {
 				close_on_click: true
 			},
 			sourcing: {
-				source_text: "https://www.google.com/searchbyimage?image_url=%thumbnail;text:Google;if_spoiler:false\n> https://www.google.com/searchbyimage?image_url=%thumbnail;text:Thumbnail\n> https://www.google.com/searchbyimage?image_url=%image;text:Full image\nhttps://www.google.com/searchbyimage?image_url=%image;text:Google;if_not_spoiler:false\nhttp://regex.info/exif.cgi?imgurl=%image;text:Exif"
+				source_text: "https://www.google.com/searchbyimage?image_url=%thumbnail;text:google;if_spoiler:false\n> https://www.google.com/searchbyimage?image_url=%thumbnail;text:Thumbnail\n> https://www.google.com/searchbyimage?image_url=%image;text:Full image\nhttps://www.google.com/searchbyimage?image_url=%image;text:google;if_not_spoiler:false\nhttp://regex.info/exif.cgi?imgurl=%image;text:exif"
 			},
 			post: {
 				footer_backlinks: false,
@@ -1136,10 +1143,10 @@ var xch = (function () {
 
 		JSON: (function () {
 
-			function Pointer(tree) {
+			var Pointer = function (tree) {
 				this.tree = tree;
 			};
-			function Type(typename, data, has_data) {
+			var Type = function (typename, data, has_data) {
 				this.typename = typename;
 				this.data = data;
 				this.parse = true;
@@ -1155,7 +1162,7 @@ var xch = (function () {
 					*/
 				}
 			};
-			function Filter() {
+			var Filter = function () {
 				this.depth = -1;
 				this.deny = null;
 				this.allow = null;
@@ -1621,10 +1628,286 @@ var xch = (function () {
 		})(),
 
 
+		// API
+		API: (function () {
+
+			var API = function () {
+				this.prefix = "xch_api_";
+				this.event_listen_function = null;
+
+				this.events = {};
+
+				if ("init" in this_private) {
+					this_private.init.call(this);
+				}
+			};
+
+			var this_private = {
+
+				init: function () {
+					// Remove
+					delete this_private.init;
+
+					// Getting
+					this.gets = {};
+					this.on_get = this_private.on_get;
+					this.off_get = this_private.off_get;
+					this.get_listen_function = null;
+
+					// Acquire listening
+					this.on("acquire", function (event, data, self) {
+						return {
+							API: xch.API,
+							Message: xch.Message,
+							Popup: xch.Popup,
+							Menu: xch.Menu
+						};
+					}, this);
+
+					// API
+					this.on_get("posts", function () {
+						return (content ? content.on_get_posts() : []);
+					});
+				},
+
+				on_get: function (event, callback, callback_data) {
+					// callback format: function (event_data, callback_data, event_name) with (this instanceof xch.API)
+					if (this.get_listen_function === null) {
+						// API watching
+						var self = this;
+						document.addEventListener(this.prefix + "get", this.get_listen_function = (function (event) {
+							this_private.receive_get.call(self, event.detail);
+						}), false);
+					}
+
+					// Add event listener
+					if (!(event in this.gets)) {
+						this.gets[event] = {
+							triggering: false,
+							callbacks: [],
+							removals: null
+						};
+					}
+
+					// Add
+					this.gets[event].callbacks.push([callback, callback_data]);
+				},
+				off_get: function (event, callback) {
+					if (event in this.gets) {
+						var e = this.gets[event];
+						if (e.triggering) {
+							// Queue for removal
+							if (e.removals == null) e.removals = [];
+							e.removals.push(callback);
+						}
+						else {
+							// Remove any callbacks
+							e = e.callbacks;
+							for (var i = 0; i < e.length; ++i) {
+								if (e[i][0] == callback) {
+									e.splice(i, 1);
+									--i;
+								}
+							}
+							// Remove if empty
+							if (e.length == 0) {
+								delete this.gets[event];
+							}
+						}
+					}
+				},
+
+				receive_get: function (data) {
+					// Callbacks
+					var ret = undefined;
+					var get_name = data.value;
+					if (get_name in this.gets) {
+						// Trigger an event
+						var e = this.gets[get_name];
+						e.triggering = true;
+
+						for (var i = 0, j = e.callbacks.length; i < j; ++i) {
+							// Trigger
+							ret = e.callbacks[i][0].call(this, get_name, e.callbacks[i][1]);
+						}
+
+						e.triggering = false;
+
+						// Remove anything if necessary
+						if (e.removals != null) {
+							for (var i = 0; i < e.removals.length; ++i) {
+								this.off_get(get_name, e.removals[i]);
+							}
+							e.removals = null;
+						}
+					}
+
+					// Return
+					data.return_value = ret || data.return_value;
+				},
+
+				receive: function (data) {
+					var receiver_id = data.receiver_count || 0;
+
+					// Callbacks
+					var ret = undefined;
+					var event_name = data.event;
+					if (event_name in this.events) {
+
+						// Trigger an event
+						var ret_callback = (data.return_filter instanceof Function);
+						var e = this.events[event_name];
+						e.triggering = true;
+
+						for (var i = 0, j = e.callbacks.length; i < j; ++i) {
+							// Trigger
+							ret = e.callbacks[i][0].call(this, data.data, e.callbacks[i][1], event_name);
+							// Return callback
+							if (ret_callback) {
+								data.return_filter.call(this, ret, receiver_id, i);
+							}
+						}
+
+						e.triggering = false;
+
+						// Remove anything if necessary
+						if (e.removals != null) {
+							for (var i = 0; i < e.removals.length; ++i) {
+								this.off(event_name, e.removals[i]);
+							}
+							e.removals = null;
+						}
+
+					}
+
+					// Next receiver
+					data.receiver_count = receiver_id + 1;
+
+					// Return
+					data.return_value = ret || data.return_value;
+				}
+
+			};
+
+			API.prototype = {
+
+				constructor: API,
+
+				signal: function (event, data, return_filter) {
+					// return_filter format: function (return_value, receiver_id, callback_id) with (this instanceof xch.API)
+					var detail = {
+						event: event,
+						data: data,
+						return_filter: return_filter,
+						receiver_count: 0,
+						return_value: undefined
+					};
+					document.dispatchEvent(new CustomEvent(this.prefix + "event", {
+						detail: detail
+					}));
+					return detail.return_value;
+				},
+				on: function (event, callback, callback_data) {
+					// callback format: function (event_data, callback_data, event_name) with (this instanceof xch.API)
+					if (this.event_listen_function === null) {
+						// API watching
+						var self = this;
+						document.addEventListener(this.prefix + "event", this.event_listen_function = (function (event) {
+							this_private.receive.call(self, event.detail);
+						}), false);
+					}
+
+					// Add event listener
+					if (!(event in this.events)) {
+						this.events[event] = {
+							triggering: false,
+							callbacks: [],
+							removals: null
+						};
+					}
+
+					// Add
+					this.events[event].callbacks.push([callback, callback_data]);
+				},
+				off: function (event, callback) {
+					if (event in this.events) {
+						var e = this.events[event];
+						if (e.triggering) {
+							// Queue for removal
+							if (e.removals == null) e.removals = [];
+							e.removals.push(callback);
+						}
+						else {
+							// Remove any callbacks
+							e = e.callbacks;
+							for (var i = 0; i < e.length; ++i) {
+								if (e[i][0] == callback) {
+									e.splice(i, 1);
+									--i;
+								}
+							}
+							// Remove if empty
+							if (e.length == 0) {
+								delete this.events[event];
+							}
+						}
+					}
+				},
+
+				get: function (value) {
+					var detail = {
+						value: value,
+						return_value: undefined
+					};
+					document.dispatchEvent(new CustomEvent(this.prefix + "get", {
+						detail: detail
+					}));
+					return detail.return_value;
+				},
+
+				e: function (tag) {
+					var e = document.createElement(tag);
+					if (arguments.length <= 1) {
+						e.className = style.cls;
+					}
+					else {
+						tag = style.cls;
+						for (var i = 1; i < arguments.length; ++i) {
+							tag += " ";
+							tag += arguments[i];
+						}
+						e.className = tag;
+					}
+					return e;
+				},
+				checkbox: function (checked, size) {
+					return style.checkbox(checked, size);
+				},
+
+				remove: function () {
+					if (this.event_listen_function) {
+						// Remove API listener
+						document.removeEventListener(this.prefix + "event", this.event_listen_function, false);
+						this.event_listen_function = null;
+					}
+					if (this.get_listen_function) {
+						// Remove API listener
+						document.removeEventListener(this.prefix + "get", this.get_listen_function, false);
+						this.get_listen_function = null;
+					}
+				}
+
+			};
+
+			return API;
+
+		})(),
+
+
 		// Location
 		Location: (function () {
 
-			function Location() {
+			var Location = function () {
 				var self = this;
 
 				this.hash_mark = "#";
@@ -1667,7 +1950,7 @@ var xch = (function () {
 				trigger: function (event, data) {
 					// Trigger an event
 					var e = this.events[event];
-					for (var i = 0, j = e.length; i < j; ++i) {
+					for (var i = 0; i < e.length; ++i) {
 						e[i].call(this, data, event);
 					}
 				}
@@ -1728,7 +2011,7 @@ var xch = (function () {
 				off: function (event, callback) {
 					if (event in this.events) {
 						var e = this.events[event];
-						for (var i = 0, j = e.length; i < j; ++i) {
+						for (var i = 0; i < e.length; ++i) {
 							if (e[i] == callback) {
 								e.splice(i, 1);
 								--i;
@@ -1746,7 +2029,7 @@ var xch = (function () {
 		// Communication
 		Communication: (function () {
 
-			function Communication() {
+			var Communication = function () {
 				var self = this;
 
 				// Tab count management
@@ -1764,6 +2047,8 @@ var xch = (function () {
 					this.ct_alive_update_interval = null;
 					this.ct_init_time = 0;
 				}
+
+				this.sync_event_name = api.prefix + "storage_sync";
 
 				this.tab_id = -1;
 				this.site = null;
@@ -1869,6 +2154,7 @@ var xch = (function () {
 					xch.delete_value(this.ct_var_tab_time + tab_id);
 				},
 				clear_all_tab_counting_data: function () {
+					// Nothing really
 				},
 
 				cross_tab_trigger: function (event, data) {
@@ -1909,7 +2195,7 @@ var xch = (function () {
 
 					// Syncing
 					window.addEventListener("storage", function (event) {
-						if (event.key == "xch_api_storage_sync" && event.newValue !== null) {
+						if (event.key == self.sync_event_name && event.newValue !== null) {
 							try {
 								var val = JSON.parse(event.newValue);
 								this_private.on_sync_event.call(self, val);
@@ -1921,12 +2207,12 @@ var xch = (function () {
 				},
 
 				cross_tab_trigger: function (event, data) {
-					window.localStorage.setItem("xch_api_storage_sync", JSON.stringify({
+					window.localStorage.setItem(this.sync_event_name, JSON.stringify({
 						site: this.site,
 						event: event,
 						data: data
 					}));
-					window.localStorage.removeItem("xch_api_storage_sync");
+					window.localStorage.removeItem(this.sync_event_name);
 				},
 				cross_tab_on: function (event, callback, callback_data) {
 					// Register event
@@ -1948,7 +2234,7 @@ var xch = (function () {
 						}
 						else {
 							e = e.callbacks;
-							for (var i = 0, j = e.length; i < j; ++i) {
+							for (var i = 0; i < e.length; ++i) {
 								if (e[i][0] == callback) {
 									e.splice(i, 1);
 									--i;
@@ -1972,7 +2258,7 @@ var xch = (function () {
 		// Header
 		Header: (function () {
 
-			function Header(html) {
+			var Header = function (html) {
 				this.page_count = 0;
 				this.page_index = 0;
 				this.boards = [];
@@ -1995,338 +2281,17 @@ var xch = (function () {
 					list: "page %current"
 				};
 
-				this.outer_container = null;
 				this.container = null;
 
 				this.debug_popup = null;
 				this.settings_popup = null;
 
-				this.parse(html);
+				this.main_menu = null;
+
+				this_private.parse.call(this, html);
 			};
 
 			var this_private = {
-
-				stylize: function (html) {
-					var self = this;
-
-					var body = html.find("body");
-
-					// Create the header
-					var board_list, options, post_option, thread_option, menu_option;
-					body.prepend( //{
-						(this.outer_container = style.e("div"))
-						.addClass("header container top")
-						.append(
-							(this.container = style.e("div"))
-							.addClass("header fixed")
-							.append(
-								style.e("div").addClass("background")
-							)
-							.append(
-								style.e("div").addClass("content")
-								.append(
-									(board_list = style.e("div"))
-									.addClass("boards")
-								)
-								.append(
-									style.e("div").addClass("custom")
-									.append(
-										(options = style.e("div").addClass("options"))
-										.append(
-											(post_option = style.e("a"))
-											.addClass("reply_option option")
-											.text("post")
-										)
-										.append(
-											(thread_option = style.e("a"))
-											.addClass("thread_option option")
-											.text("thread")
-										)
-										.append(
-											(menu_option = style.e("a"))
-											.addClass("menu_option option")
-											.attr("target", "_blank")
-											.attr("href", xch.script.homepage)
-											.text(xch.script.name)
-										)
-									)
-								)
-							)
-						)
-						.append(
-							style.e("div").addClass("padding")
-						)
-					); //}
-					body.append( //{
-						(this.footer = style.e("div"))
-						.addClass("footer")
-					); //}
-
-					// Add boards
-					var g_id = -1;
-					var board_group, b, bn;
-					for (var i = 0; i < this.boards.length; ++i) {
-						if (g_id != this.boards[i].group) {
-							board_group = board_list.children('.group[group_id="' + this.boards[i].group + '"]');
-							if (board_group.length != 1) {
-								board_list.append(
-									(board_group = style.e("span"))
-									.addClass("group")
-									.attr("group_id", this.boards[i].group)
-								);
-							}
-							g_id = this.boards[i].group;
-						}
-
-						// Add
-						board_group.append(
-							(b = style.e("span"))
-							.addClass("board")
-							.html(
-								style.e("a")
-								.attr("href", "/" + this.boards[i].board + "/index.html")
-								.append(
-									style.e("span")
-									.addClass("short")
-									.html(this.boards[i].board)
-								)
-								.append(
-									(bn = style.e("span"))
-									.addClass("name")
-								)
-							)
-						);
-						if (this.boards[i].name) {
-							bn.text(this.boards[i].name);
-							b.addClass("named");
-						}
-						if (this.boards[i].subtitle) {
-							bn.attr("title", this.boards[i].subtitle);
-						}
-						if (this.board == this.boards[i].board) {
-							b.addClass("current");
-						}
-					}
-
-					// Page selector
-					if (this.page_count > 0) {
-						var p_sel;
-						options.prepend(
-							(p_sel = style.e("a"))
-							.addClass("page_option option")
-							.text(this.format_page(this.page_format.main, this.page_index, this.page_count))
-						);
-						var p_sel_data = { menu: null };
-						p_sel.on("mouseenter click", p_sel_data, function (event) {
-							// Create page selector
-							this_private.create_page_selector.call(self, $(this), event.data);
-						});
-					}
-
-					// Events
-					var data = { self: this };
-					post_option.on("click", data, function (event) {
-						if (event.which != 1) return true;
-
-						var qr = content.qr;
-						if (!qr.is_open()) {
-							qr.open();
-							if (qr.settings.window.clear_post_on_reopen) {
-								qr.clear();
-							}
-						}
-						qr.focus_comment();
-
-						return false;
-					});
-					menu_option.on("click", data, function (event) {
-						if (event.which != 1) return true;
-
-						this_private.create_main_menu.call(event.data.self, $(this));
-
-						return false;
-					});
-
-					// Board info
-					this.outer_container.after(
-						style.e("div")
-						.addClass("board_info")
-						.append( //{ Banner
-							style.e("div")
-							.addClass("banner container")
-							.append(
-								style.e("img")
-								.addClass("banner")
-								.on("load", function (event) {
-									$(this).parent().addClass("loaded");
-								})
-								.on("error", function (event) {
-									$(this).parent().addClass("error");
-								})
-								.attr("src", "/banners/banner.php")
-							)
-						) //}
-						.append(
-							style.e("div")
-							.addClass("title")
-							.text(this.format_board_info(this.board_title_format))
-						)
-						.append(
-							style.e("div")
-							.addClass("subtitle")
-							.text(this.format_board_info(this.board_subtitle_format))
-						)
-					);
-				},
-				create_page_selector: function (object, event_data) {
-					if (event_data.menu == null) {
-						var self = this;
-
-						// Create page list
-						var options = [];
-						for (var i = 0; i < this.page_count; ++i) {
-							options.push({
-								html: (
-									style.e("a")
-									.addClass("page_selection")
-									.attr("href", info.create_url.to_board(info.board, i + 1))
-									.text(this.format_page(this.page_format.list, i + 1, this.page_count))
-								),
-								events: {
-									click: function (event) {
-										if (event.which != 1) return true;
-
-										this.menu.close();
-										location.go_to_new(this.container.attr("href"));
-										return false;
-									}
-								}
-							});
-						}
-
-						// Create menu
-						event_data.menu = new xch.Menu(object, {
-							close_on_mouseleave: true,
-							fit_width_min: true,
-							keep_on_screen: true,
-							max_idle_time: 5.0,
-							fixed_z: null,
-							open: "down",
-							events: {
-								close: function (event2) {
-									event_data.menu = null;
-								}
-							},
-							options: options
-						});
-					}
-				},
-				create_main_menu: function (object) {
-					var self = this;
-
-					var menu = new xch.Menu(object, {
-						close_on_mouseleave: false,
-						fit_width_min: true,
-						keep_on_screen: true,
-						fixed_z: null,
-						open: "down",
-						events: {
-							close: function (event2) {
-								//event_data.menu = null;
-							}
-						},
-						options: [{
-							text: "Settings",
-							events: {
-								click: function (event) {
-									if (event.which != 1) return true;
-
-									this.menu.close();
-
-									this_private.open_settings.call(self);
-
-									return false;
-								}
-							}
-						}, {
-							text: "Debug Info",
-							events: {
-								click: function (event) {
-									if (event.which != 1) return true;
-
-									this.menu.close();
-
-									this_private.popup_debug_info.call(self);
-
-									return false;
-								}
-							}
-						}, {
-							html: (
-								style.e("a")
-								.attr("target", "_blank")
-								.attr("href", xch.script.homepage)
-								.text("Homepage")
-							),
-							events: {
-								click: function (event) {
-									if (event.which != 1) return true;
-
-									this.menu.close();
-									location.go_to_new(this.container.attr("href"));
-									return false;
-								}
-							}
-						}]
-					});
-				},
-				popup_debug_info: function () {
-					if (this.debug_popup != null && this.debug_popup.open) return;
-
-					this.debug_popup = content.messenger.popup({
-						title: "Debug Information",
-						description: "Any personal information (such as passwords, posted content, etc.) and unimportant information (such as the details of current threads/posts) has been omitted.",
-						textarea: {
-							height: 200,
-							value: xch.get_debug_info(),
-							readonly: true
-						},
-						buttons: [{
-							text: "Close",
-							on: {
-								click: {
-									data: null,
-									callback: function (event) {
-										if (event.which != 1) return true;
-
-										event.data.messenger.popup_close(event.data.popup);
-									}
-								}
-							}
-						}],
-						no_close: true,
-						size: {
-							width: 600
-						}
-					});
-				},
-				open_settings: function () {
-					if (this.settings_popup != null && this.settings_popup.open) return;
-
-					this.settings_popup = content.messenger.popup({
-						title: "Settings",
-						description: "Settings are not available yet, please wait warmly.",
-						size: {
-							width: 180
-						}
-					});
-				}
-
-			};
-
-			Header.prototype = {
-
-				constructor: Header,
 
 				parse: function (html) {
 					var self = this;
@@ -2405,6 +2370,355 @@ var xch = (function () {
 					// Stylize
 					this_private.stylize.call(this, html);
 				},
+
+				stylize: function (html) {
+					var self = this;
+
+					var body = html.find("body");
+
+					// Create the header
+					var board_list, options, post_option, thread_option, menu_option;
+					body.prepend( //{
+						(this.container = style.e("div", "header fixed"))
+						.append(
+							style.e("div", "header_background")
+						)
+						.append(
+							style.e("div", "header_content")
+							.append(
+								(board_list = style.e("div", "header_boards"))
+							)
+							.append(
+								style.e("div", "header_custom")
+								.append(
+									(options = style.e("div", "header_options"))
+									.append(
+										(post_option = style.e("a", "header_option header_option_reply"))
+										.text("post")
+									)
+									.append(
+										(thread_option = style.e("a", "header_option header_option_thread"))
+										.text("thread")
+									)
+									.append(
+										(menu_option = style.e("a", "header_option header_option_menu"))
+										.attr("target", "_blank")
+										.attr("href", xch.script.homepage)
+										.text(xch.script.name)
+									)
+								)
+							)
+						)
+					) //}
+					.prepend(
+						style.e("div", "content_padding top")
+					)
+					.append(
+						style.e("div", "content_padding bottom")
+					);
+
+					// Add boards
+					var g_id = -1;
+					var board_group, b, bn;
+					for (var i = 0; i < this.boards.length; ++i) {
+						if (g_id != this.boards[i].group) {
+							board_group = board_list.children('.header_board_group[group_id="' + this.boards[i].group + '"]');
+							if (board_group.length != 1) {
+								board_list.append(
+									(board_group = style.e("span", "header_board_group"))
+									.attr("group_id", this.boards[i].group)
+								);
+							}
+							g_id = this.boards[i].group;
+						}
+
+						// Add
+						board_group.append(
+							(b = style.e("span", "header_board"))
+							.html(
+								style.e("a", "header_board_link")
+								.attr("href", "/" + this.boards[i].board + "/index.html")
+								.append(
+									style.e("span", "header_board_text_short")
+									.html(this.boards[i].board)
+								)
+								.append(
+									(bn = style.e("span", "header_board_text_name"))
+								)
+							)
+						);
+						if (this.boards[i].name) {
+							bn.text(this.boards[i].name);
+							b.addClass("named");
+						}
+						if (this.boards[i].subtitle) {
+							bn.attr("title", this.boards[i].subtitle);
+						}
+						if (this.board == this.boards[i].board) {
+							b.addClass("current");
+						}
+					}
+
+					// Page selector
+					if (this.page_count > 0) {
+						var p_sel;
+						options.prepend(
+							(p_sel = style.e("a", "header_option header_option_page"))
+							.text(this.format_page(this.page_format.main, this.page_index, this.page_count))
+						);
+						var p_sel_data = { menu: null };
+						p_sel.on("mouseenter click", p_sel_data, function (event) {
+							// Create page selector
+							this_private.create_page_selector.call(self, $(this), event.data);
+						});
+					}
+
+					// Events
+					var data = { self: this };
+					post_option.on("click", data, function (event) {
+						if (event.which != 1) return true;
+
+						var qr = content.qr;
+						if (!qr.is_open()) {
+							qr.open();
+							if (qr.settings.window.clear_post_on_reopen) {
+								qr.clear();
+							}
+						}
+						qr.focus_comment();
+
+						return false;
+					});
+					menu_option.on("click", data, function (event) {
+						if (event.which != 1) return true;
+
+						this_private.create_main_menu.call(event.data.self, $(this));
+
+						return false;
+					});
+
+					// Board info
+					this.container.after(
+						style.e("div", "board_info")
+						.append( //{ Banner
+							style.e("div", "board_banner_container")
+							.append(
+								style.e("img", "board_banner")
+								.on("load", function (event) {
+									$(this).parent().addClass("loaded");
+								})
+								.on("error", function (event) {
+									$(this).parent().addClass("error");
+								})
+								.attr("src", "/banners/banner.php")
+							)
+						) //}
+						.append(
+							style.e("div", "board_info_title")
+							.text(this.format_board_info(this.board_title_format))
+						)
+						.append(
+							style.e("div", "board_info_subtitle")
+							.text(this.format_board_info(this.board_subtitle_format))
+						)
+					);
+				},
+
+				on_main_menu_close: function (event, self) {
+					api.signal("main_menu_close", {
+						menu: self.main_menu
+					});
+					self.main_menu = null;
+				},
+				on_main_menu_settings_click: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.option.menu.close();
+
+					this_private.open_settings.call(event.data.callback_data);
+
+					return false;
+				},
+				on_main_menu_debug_info_click: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.option.menu.close();
+
+					this_private.popup_debug_info.call(event.data.callback_data);
+
+					return false;
+				},
+				on_main_menu_homepage_click: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.option.menu.close();
+					//location.go_to_new(event.data.option.container.attr("href"));
+
+					return true;//false;
+				},
+
+				create_page_selector: function (object, event_data) {
+					if (event_data.menu == null) {
+						var self = this;
+
+						// Create page list
+						var options = [];
+						for (var i = 0; i < this.page_count; ++i) {
+							options.push({
+								html: (
+									style.e("a", "page_selection")
+									.attr("href", info.create_url.to_board(info.board, i + 1))
+									.text(this.format_page(this.page_format.list, i + 1, this.page_count))
+								),
+								on: {
+									click: function (event) {
+										if (event.which != 1) return true;
+
+										event.data.option.menu.close();
+										location.go_to_new(event.data.option.container.attr("href"));
+										return false;
+									}
+								}
+							});
+						}
+
+						// Create menu
+						event_data.menu = new xch.Menu(object, {
+							close_on_mouseleave: true,
+							fit_width_min: true,
+							keep_on_screen: true,
+							max_idle_time: 5.0,
+							fixed_z: null,
+							open: "down",
+							on: {
+								close: function (event2) {
+									event_data.menu = null;
+								}
+							},
+							options: options
+						});
+					}
+				},
+				create_main_menu: function (object) {
+					if (this.main_menu != null) {
+						this.main_menu.close();
+					}
+					var self = this;
+
+					this.main_menu = new xch.Menu(object, {
+						anchor: {
+							x: {
+								container: this.container,
+								container_side: "right",
+								menu_side: "right"
+							}
+						},
+						menu_class: "expandable_point_left",
+						menu_class_inherit: null,
+						close_on_mouseleave: false,
+						fit_width_min: true,
+						keep_on_screen: true,
+						fixed_z: null,
+						open: "down",
+						on: {
+							close: {
+								callback_data: this,
+								callback: this_private.on_main_menu_close
+							}
+						},
+						options: [{
+							text: "Settings",
+							on: {
+								click: {
+									callback_data: this,
+									callback: this_private.on_main_menu_settings_click
+								}
+							}
+						}, {
+							text: "Debug Info",
+							on: {
+								click: {
+									callback_data: this,
+									callback: this_private.on_main_menu_debug_info_click
+								}
+							}
+						}, {
+							html: (
+								style.e("a")
+								.attr("target", "_blank")
+								.attr("href", xch.script.homepage)
+								.text("Homepage")
+							),
+							on: {
+								click: {
+									callback_data: this,
+									callback: this_private.on_main_menu_homepage_click
+								}
+							}
+						}]
+					});
+
+					api.signal("main_menu_open", {
+						menu: this.main_menu
+					});
+				},
+
+				popup_debug_info: function () {
+					if (this.debug_popup != null && this.debug_popup.open) return;
+
+					this.debug_popup = new xch.Popup({
+						title: "Debug Information",
+						description: "Any personal information (such as passwords, posted content, etc.) and unimportant information (such as the details of current threads/posts) has been omitted.",
+						textarea: {
+							height: 200,
+							value: xch.get_debug_info(),
+							readonly: true
+						},
+						buttons: [{
+							text: "Close",
+							on: {
+								click: {
+									callback_data: null,
+									callback: function (event) {
+										if (event.which != 1) return true;
+
+										event.data.popup.close();
+									}
+								}
+							}
+						}],
+						no_close: true,
+						size: {
+							width: 600
+						}
+					});
+				},
+				open_settings: function () {
+					if (this.settings_popup != null && this.settings_popup.open) return;
+
+					this.settings_popup = new xch.Popup({
+						title: "Settings",
+						description: "Settings are not available yet, please wait warmly.",
+						size: {
+							width: 180
+						},
+						on: {
+							close: {
+								callback: function (event, self) {
+									self.settings_popup = null;
+								},
+								callback_data: this
+							}
+						}
+					});
+				}
+
+			};
+
+			Header.prototype = {
+
+				constructor: Header,
+
 				add_board: function (board, group, name, subtitle) {
 					this.boards.push({
 						board: board,
@@ -2514,7 +2828,7 @@ var xch = (function () {
 		// Quick reply
 		QuickReply: (function () {
 
-			function QuickReply(html) {
+			var QuickReply = function (html) {
 				this.persistent = false;
 				this.spoiler_available = false;
 				this.target_thread = null;
@@ -2658,6 +2972,10 @@ var xch = (function () {
 							timeout: 10,
 							stop: false
 						},
+						context_error: {
+							timeout: 5,
+							stop: false
+						},
 						connection_error: {
 							timeout: 5,
 							stop: false
@@ -2715,6 +3033,7 @@ var xch = (function () {
 
 				// Start
 				this_private.init.call(this, html);
+				this.set_target(this.target_thread);
 
 				// Window events
 				var data = { self: this, resize_timer: null };
@@ -2723,8 +3042,15 @@ var xch = (function () {
 				.on("mousemove", data, this_private.on_window_mousemove)
 				.on("resize", data, this_private.on_window_resize);
 
+				content.on("thread_update", this_private.on_thread_updated, this);
+				content.on("thread_load", this_private.on_thread_deleted, this);
+
 				communication.cross_tab_on("qr_save", function (event, self) {
 					this_private.on_cross_tab_save.call(self, event);
+				}, this);
+
+				communication.cross_tab_on("qr_context_expire", function (event, self) {
+					this_private.on_cross_tab_context_change.call(self, event);
 				}, this);
 			};
 
@@ -2802,6 +3128,27 @@ var xch = (function () {
 						this_private.load_post_email.call(this);
 					}
 				},
+				on_cross_tab_context_change: function (event) {
+					// Check if context needs an update
+					var target = (this.target_thread_is_current ? this.target_thread : this.post_context.thread);
+					var needs_update = false;
+					if (target) {
+						if (
+							event.thread_id === target.id &&
+							event.board == target.board
+						) {
+							needs_update = true;
+						}
+					}
+					else if (event.thread_id === null) {
+						needs_update = true;
+					}
+
+					// Update
+					if (needs_update && !this.post_context.acquiring) {
+						this_private.acquire_post_context.call(this, this.target_thread)
+					}
+				},
 
 				on_window_mouseup: function (event) {
 					if (event.data.self.moving.active) {
@@ -2849,8 +3196,33 @@ var xch = (function () {
 					}
 				},
 
+				on_thread_updated: function (event, self) {
+					if (event.thread != self.target_thread) return;
+
+					if (event.state_old.locked != self.target_thread.locked && self.target_thread.locked) {
+						// Stop
+						if (self.submitting.active) {
+							this_private.submit_abort.call(self);
+						}
+						else if (self.submitting.queued) {
+							this_private.submit_dequeue.call(self);
+						}
+					}
+				},
+				on_thread_deleted: function (event, self) {
+					if (event.thread != self.target_thread) return;
+
+					// Stop
+					if (self.submitting.active) {
+						this_private.submit_abort.call(self);
+					}
+					else if (self.submitting.queued) {
+						this_private.submit_dequeue.call(self);
+					}
+				},
+
 				init: function (html) {
-					this_private.acquire_post_context_from_html.call(this, html, undefined);
+					this_private.acquire_post_context_from_html.call(this, html, undefined, false);
 
 					var post_form = html.find('form[name="post"]');
 					if (post_form.length > 0) {
@@ -2873,91 +3245,70 @@ var xch = (function () {
 					var i_name_remove, i_email_remove;
 
 					// Create QR
-					(this.container = style.e("div"))
-					.addClass("popup quick_reply" + (this.persistent ? " persistent" : ""))
+					(this.container = style.e("div", "popup quick_reply" + (this.persistent ? " persistent" : "")))
 					.append(
-						style.e("div").addClass("background")
+						style.e("div", "popup_background")
 						.append(
-							(resizers = style.e("div"))
-							.addClass("resizers hidden")
+							(resizers = style.e("div", "popup_resizers hidden"))
 						)
 					)
 					.append(
-						(cont = style.e("div"))
-						.addClass("container packed").css("width", this.size.width + "px")
+						(cont = style.e("div", "popup_content packed"))
+						.css("width", this.size.width + "px")
 						.append( //{ Label
-							(grabber = style.e("div"))
-							.addClass("row grab")
+							(grabber = style.e("div", "qr_row grab"))
 							.append(
-								style.e("style")
-								.addClass("cell no_bg")
+								style.e("div", "qr_cell no_bg")
 								.attr("target_width", "100%")
 								.append(
-									style.e("div")
+									style.e("div", "qr_cell_inner")
 									.append(
-										(main_label = style.e("div"))
-										.addClass("main_label")
+										(main_label = style.e("div", "qr_main_label"))
 										.append(
-											(main_label_text = style.e("span"))
-											.addClass("text")
+											(main_label_text = style.e("span", "qr_main_label_prefix"))
 										)
 										.append(
-											style.e("span")
-											.addClass("target")
+											style.e("span", "qr_main_label_target")
 											.append(
-												(this.main_label_target_link = style.e("a"))
+												(this.main_label_target_link = style.e("a", "qr_main_label_target_text"))
 												.attr("target", "_blank")
 											)
 										)
 									)
-									.append(style.e("div").addClass("b"))
-									.append(style.e("div").addClass("l"))
-									.append(style.e("div").addClass("t"))
 								)
 							)
 							.append(
-								style.e("style").addClass("cell no_bg")
+								style.e("div", "qr_cell no_bg")
 								.attr("target_width", "auto")
 								.append(
-									style.e("div")
+									style.e("div", "qr_cell_inner")
 									.append(
-										(close = style.e("span"))
-										.addClass("close")
+										(close = style.e("span", "qr_close"))
 									)
-									.append(style.e("div").addClass("b"))
-									.append(style.e("div").addClass("l"))
-									.append(style.e("div").addClass("t"))
 								)
 							)
 						) //}
 						.append( //{ Top
-							style.e("div").addClass("row top")
+							style.e("div", "qr_row top")
 							.append(
-								style.e("style").addClass("cell")
+								style.e("div", "qr_cell")
 								.attr("target_width", "33%")
 								.append(
-									style.e("div")
+									style.e("div", "qr_cell_inner")
 									.append(
-										(i_name = style.e("input"))
-										.addClass("name")
+										(i_name = style.e("input", "popup_input qr_input qr_name"))
 										.attr("type", "text")
 										.attr("placeholder", "Name")
 										.attr("autocomplete", "off")
 										.attr("maxlength", this.limits.name)
 									)
-									.append(style.e("div").addClass("b"))
-									.append(style.e("div").addClass("l"))
-									.append(style.e("div").addClass("t"))
 									.append(
-										style.e("div")
-										.addClass("saved_settings hidden")
-										.append(style.e("div"))
+										style.e("div", "qr_saved_settings hidden")
+										.append(style.e("div", "qr_saved_settings_v_aligner"))
 										.append(
-											style.e("span")
-											.addClass("inner")
+											style.e("span", "qr_saved_settings_inner")
 											.append(
-												(i_name_remove = style.e("a"))
-												.addClass("unsave")
+												(i_name_remove = style.e("a", "qr_saved_settings_unsave"))
 												.attr("title", "Unsave name")
 											)
 										)
@@ -2965,31 +3316,24 @@ var xch = (function () {
 								)
 							)
 							.append(
-								style.e("style").addClass("cell")
+								style.e("div", "qr_cell")
 								.attr("target_width", "34%")
 								.append(
-									style.e("div")
+									style.e("div", "qr_cell_inner")
 									.append(
-										(i_email = style.e("input"))
-										.addClass("email")
+										(i_email = style.e("input", "popup_input qr_input qr_email"))
 										.attr("type", "text")
 										.attr("placeholder", "Email")
 										.attr("autocomplete", "off")
 										.attr("maxlength", this.limits.email)
 									)
-									.append(style.e("div").addClass("b"))
-									.append(style.e("div").addClass("l"))
-									.append(style.e("div").addClass("t"))
 									.append(
-										style.e("div")
-										.addClass("saved_settings hidden")
-										.append(style.e("div"))
+										style.e("div", "qr_saved_settings hidden")
+										.append(style.e("div", "qr_saved_settings_v_aligner"))
 										.append(
-											style.e("span")
-											.addClass("inner")
+											style.e("span", "qr_saved_settings_inner")
 											.append(
-												(i_email_remove = style.e("a"))
-												.addClass("unsave")
+												(i_email_remove = style.e("a", "qr_saved_settings_unsave"))
 												.attr("title", "Unsave email")
 											)
 										)
@@ -2997,82 +3341,66 @@ var xch = (function () {
 								)
 							)
 							.append(
-								style.e("style").addClass("cell")
+								style.e("div", "qr_cell")
 								.attr("target_width", "33%")
 								.append(
-									style.e("div")
+									style.e("div", "qr_cell_inner")
 									.append(
-										(i_subject = style.e("input"))
-										.addClass("subject")
+										(i_subject = style.e("input", "popup_input qr_input qr_subject"))
 										.attr("type", "text")
 										.attr("placeholder", "Subject")
 										.attr("autocomplete", "off")
 										.attr("maxlength", this.limits.subject)
 									)
-									.append(style.e("div").addClass("b"))
-									.append(style.e("div").addClass("l"))
-									.append(style.e("div").addClass("t"))
 								)
 							)
 						) //}
 						.append( //{ Comment
-							style.e("div").addClass("row")
+							style.e("div", "qr_row")
 							.append(
-								style.e("style").addClass("cell")
+								style.e("div", "qr_cell")
 								.attr("target_width", "100%")
 								.append(
-									style.e("div")
+									style.e("div", "qr_cell_inner")
 									.append(
-										(i_comment = style.e("textarea"))
-										.addClass("comment")
+										(i_comment = style.e("textarea", "popup_input qr_input qr_comment"))
 										.attr("placeholder", "Comment")
 										.attr("autocomplete", "off")
 										.css("height", this.size.height + "px")
 									)
-									.append(style.e("div").addClass("b"))
-									.append(style.e("div").addClass("l"))
-									.append(style.e("div").addClass("t"))
 								)
 							)
 						) //}
 						.append( //{ Bottom
-							style.e("div").addClass("row bottom")
+							style.e("div", "qr_row bottom")
 							.append(
-								style.e("style").addClass("cell")
+								style.e("div", "qr_cell")
 								.attr("target_width", "100%")
 								.append(
-									style.e("div")
+									style.e("div", "qr_cell_inner")
 									.append(
-										(i_file_name = style.e("input"))
-										.addClass("file_name")
+										(i_file_name = style.e("input", "popup_input qr_input qr_file_name"))
 										.attr("type", "text")
 										.attr("placeholder", "File")
 										.attr("readonly", "readonly")
 										.attr("autocomplete", "off")
 									)
-									.append(style.e("div").addClass("b"))
-									.append(style.e("div").addClass("l"))
-									.append(style.e("div").addClass("t"))
 									.append(
-										style.e("div")
-										.addClass("file_settings hidden")
-										.append(style.e("div"))
+										style.e("div", "qr_file_settings hidden")
+										.append(style.e("div", "qr_file_settings_v_aligner"))
 										.append(
-											style.e("span")
-											.addClass("inner")
+											style.e("span", "qr_file_settings_inner")
 											.append(
-												(i_file_spoiler = style.create_checkbox(false, "small"))
-												.addClass("file_spoiler")
+												(i_file_spoiler = style.checkbox(false, "small"))
+												.addClass("qr_file_spoiler qr_file_settings_item")
 												.attr("title", "Spoiler image")
 											)
 											.append(
-												(i_file_remove = style.e("a"))
-												.addClass("file_remove")
+												(i_file_remove = style.e("a", "qr_file_remove qr_file_settings_item"))
 												.attr("title", "Remove file")
 											)
 											.append(
-												(i_file = style.e("input"))
-												.addClass("file")
+												(i_file = style.e("input", "qr_file qr_file_settings_item"))
 												.attr("type", "file")
 												.attr("multiple", "multiple")
 											)
@@ -3081,60 +3409,62 @@ var xch = (function () {
 								)
 							)
 							.append(
-								style.e("style").addClass("cell")
+								style.e("div", "qr_cell")
 								.attr("target_width", "64px")
 								.append(
-									style.e("div")
+									style.e("div", "qr_cell_inner")
 									.append(
-										(submit = style.e("button"))
-										.addClass("submit")
-										.html(
-											style.e("span")
-										)
-									)
-									.append(
-										style.e("div").addClass("b cooldown container")
+										(submit = style.e("button", "popup_button qr_button qr_submit"))
 										.append(
-											(this.cooldown.bar = style.e("div"))
-											.addClass("cooldown ready")
-											.append(
-												(this.cooldown.bar_inner = style.e("div"))
-												.addClass("inner")
-											)
+											style.e("span", "qr_submit_text")
 										)
 									)
-									.append(style.e("div").addClass("l"))
-									.append(style.e("div").addClass("t"))
 								)
 							)
 						) //}
 						.append( //{ Status
-							style.e("div").addClass("status hidden")
+							style.e("div", "qr_status hidden")
 							.append(
-								style.e("div")
+								style.e("div", "qr_status_inner")
 								.append(
-									style.e("div")
+									style.e("div", "qr_status_text")
 									.append(
-										style.e("span")
-										.addClass("message")
+										style.e("span", "qr_status_message")
 									)
 									.append(
-										style.e("span")
-										.addClass("attempt hidden")
+										style.e("span", "qr_status_attempt hidden")
 									)
 								)
 								.append(
-									style.e("div")
-									.addClass("progress bar default")
+									style.e("div", "qr_progress default")
 									.append(
-										style.e("div")
-										.addClass("inner")
+										style.e("div", "qr_progress_inner")
 									)
 								)
 							)
 						) //}
 					);
 
+					// Properly style cells
+					var qr_cells = this.container.find(".qr_cell_inner");
+					for (var i = 0; i < qr_cells.length; ++i) {
+						$(qr_cells[i].firstChild)
+						.after(style.e("div", "qr_cell_inner_t"))
+						.after(style.e("div", "qr_cell_inner_l"))
+						.after(style.e("div", "qr_cell_inner_b"));
+					}
+
+					// Cooldown container
+					this.container.find(".qr_submit").next()
+						.addClass("qr_cooldown_container")
+						.append(
+							(this.cooldown.bar = style.e("div", "qr_cooldown ready"))
+							.append(
+								(this.cooldown.bar_inner = style.e("div", "qr_cooldown_inner"))
+							)
+						);
+
+					// Spoiler
 					if (!this.spoiler_available) {
 						i_file_spoiler.addClass("hidden");
 					}
@@ -3143,8 +3473,7 @@ var xch = (function () {
 					for (var i = 0, r; i < 8; ++i) {
 						// Create resizer
 						resizers.append(
-							(r = style.e("div"))
-							.addClass("resizer")
+							(r = style.e("div", "popup_resizer"))
 						)
 						if (i < 3) r.addClass("top");
 						else if (i >= 4 && i < 7) r.addClass("bottom");
@@ -3160,7 +3489,7 @@ var xch = (function () {
 						return (event.which != 1);
 					};
 
-					resizers.children(".resizer")
+					resizers.children(".popup_resizer")
 					.on("mousedown", { qr: this, inner_container: cont }, function (event) {
 						if (event.which != 1) return true;
 
@@ -3376,7 +3705,7 @@ var xch = (function () {
 					mouse.x -= win.scrollLeft();
 					mouse.y -= win.scrollTop();
 					var pos = this.container.offset();
-					var conts = [ this.container.children(".container") , this.container.find(".comment") ];
+					var conts = [ this.container.children(".popup_content") , this.container.find(".qr_comment") ];
 					var diff, pos_update = false;
 					var xy = ["x","y"];
 					var wh = ["width","height"];
@@ -3412,9 +3741,9 @@ var xch = (function () {
 
 				update_size: function () {
 					// Sizing
-					var full_size = this.container.children(".container").innerWidth();
+					var full_size = this.container.children(".popup_content").innerWidth();
 					if (full_size < 1) full_size = 1;
-					this.container.find(".row").each(function () {
+					this.container.find(".qr_row").each(function () {
 						// Init
 						var total_percent = 0;
 						var total_pixels = 0;
@@ -3537,7 +3866,7 @@ var xch = (function () {
 						qr_pc_thread: thread
 					});
 				},
-				acquire_post_context_from_html: function (html, thread) {
+				acquire_post_context_from_html: function (html, thread, expire_old) {
 					var self = this;
 
 					// Find data
@@ -3566,6 +3895,14 @@ var xch = (function () {
 						});
 
 						this.post_context.thread = thread;
+
+						// Context expired
+						if (expire_old) {
+							communication.cross_tab_trigger("qr_context_expire", {
+								board: (thread ? thread.board : null),
+								thread_id: (thread ? thread.id : null)
+							});
+						}
 					}
 				},
 				on_post_context_load: function (event) {
@@ -3583,7 +3920,7 @@ var xch = (function () {
 						// Check
 						if (html.length > 0) {
 							// Parse
-							this_private.acquire_post_context_from_html.call(event.data.qr, html, event.data.qr_pc_thread);
+							this_private.acquire_post_context_from_html.call(event.data.qr, html, event.data.qr_pc_thread, true);
 						}
 						// Done
 						html = null;
@@ -3617,6 +3954,13 @@ var xch = (function () {
 					if (this.submitting.queued && this.cooldown.complete) {
 						this_private.submit.call(this);
 					}
+				},
+
+				on_info_message_close: function (event, self) {
+					self.info_message = null;
+				},
+				on_error_message_close: function (event, self) {
+					self.error_message = null;
 				},
 
 				submit_try: function (skip_timeout) {
@@ -3755,7 +4099,7 @@ var xch = (function () {
 							this_private.change_fields_readonly.call(this, false);
 						}
 
-						this.container.find(".submit").removeClass("retry");
+						this.container.find(".qr_submit").removeClass("retry");
 					}
 				},
 
@@ -3766,6 +4110,17 @@ var xch = (function () {
 					// Get submit data
 					var submit_data = this.post_data[0];
 
+					// Validate
+					var err = this.validage_post(submit_data);
+					if (err != null) {
+						this_private.submit_error.call(this, {
+							type: "Invalid Post",
+							detail: err.detail,
+							cooldown: null
+						});
+						return;
+					}
+
 					// Readonly
 					this_private.change_fields_readonly.call(this, true);
 
@@ -3773,7 +4128,7 @@ var xch = (function () {
 					this_private.submit_status_show.call(this);
 					this_private.submit_status_change.call(this, "Connecting...", "upload", 0);
 
-					this.container.find(".submit").addClass("active").removeClass("retry");
+					this.container.find(".qr_submit").addClass("active").removeClass("retry");
 
 					this_private.cooldown_stop.call(this);
 
@@ -3830,7 +4185,7 @@ var xch = (function () {
 					this.submitting.status.progress = progress;
 
 					// Change width
-					this.container.find(".status .progress.bar>.inner").css("width", (this.submitting.status.progress * 100).toFixed(2) + "%");
+					this.container.find(".qr_progress_inner").css("width", (this.submitting.status.progress * 100).toFixed(2) + "%");
 				},
 				submit_status_change: function (text, step, progress) {
 					// Set
@@ -3839,33 +4194,33 @@ var xch = (function () {
 					this.submitting.status.progress = progress;
 
 					// Text
-					var status = this.container.find(".status");
-					if (arguments.length > 0) status.find(".message").text(text);
+					var status = this.container.find(".qr_status");
+					if (arguments.length > 0) status.find(".qr_status_message").text(text);
 
 					// Progress
 					this_private.submit_progress_change.call(this, step, this.submitting.status.progress);
 
 					// Progress colors
 					if (step_pre != step) {
-						var pb = status.find(".progress.bar");
-						var pbi = pb.children(".inner");
-						style.set_class(pb, "progress", "bar", step_pre);
+						var pb = status.find(".qr_progress");
+						var pbi = pb.children(".qr_progress_inner");
+						style.set_class(pb, "qr_progress " + step_pre);
 						pbi.removeClass(step_pre).addClass(step);
 					}
 				},
 				submit_status_show: function () {
-					var status = this.container.find(".status");
+					var status = this.container.find(".qr_status");
 					if (status.hasClass("hidden")) {
 						this.submitting.status.step = "default";
 
-						this.container.find(".status").removeClass("hidden");
+						this.container.find(".qr_status").removeClass("hidden");
 					}
 				},
 				submit_status_hide: function () {
-					var pb = (this.container.find(".status").addClass("hidden").find(".progress.bar"));
-					var pbi = pb.children(".inner");
-					style.set_class(pb, "progress", "bar", "default");
-					style.set_class(pbi, "inner");
+					var pb = (this.container.find(".qr_status").addClass("hidden").find(".qr_progress"));
+					var pbi = pb.children(".qr_progress_inner");
+					style.set_class(pb, "qr_progress default");
+					style.set_class(pbi, "qr_progress_inner");
 				},
 
 				submit_on_load: function (event) {
@@ -3907,13 +4262,19 @@ var xch = (function () {
 				},
 				submit_on_abort: function (event) {
 					// Error message
-					if (event.data.qr.info_message != null && event.data.qr.info_message.id >= 0) {
-						content.messenger.remove(event.data.qr.info_message);
+					if (event.data.qr.info_message != null) {
+						event.data.qr.info_message.close();
 					}
-					event.data.qr.info_message = content.messenger.message({
+					event.data.qr.info_message = new xch.Message({
 						type: "info",
 						title: "Submission Cancelled",
-						text: "Post download was cancelled"
+						text: "Post download was cancelled",
+						on: {
+							close: {
+								callback_data: event.data.qr,
+								callback: this_private.on_info_message_close
+							}
+						}
 					});
 
 					// Done
@@ -3935,13 +4296,19 @@ var xch = (function () {
 				},
 				submit_on_upload_abort: function (event) {
 					// Error message
-					if (event.data.qr.info_message != null && event.data.qr.info_message.id >= 0) {
-						content.messenger.remove(event.data.qr.info_message);
+					if (event.data.qr.info_message != null) {
+						event.data.qr.info_message.close();
 					}
-					event.data.qr.info_message = content.messenger.message({
+					event.data.qr.info_message = new xch.Message({
 						type: "info",
 						title: "Submission Cancelled",
-						text: "Post upload was cancelled"
+						text: "Post upload was cancelled",
+						on: {
+							close: {
+								callback_data: event.data.qr,
+								callback: this_private.on_info_message_close
+							}
+						}
 					});
 
 					// Done
@@ -3971,17 +4338,25 @@ var xch = (function () {
 					) {
 						// Acquire new posting context
 						this_private.acquire_post_context.call(this, ajax_data.qr_target_thread);
+						return true;
 					}
+					return false;
 				},
 				submit_error: function (error) {
 					// Error message
-					if (this.error_message != null && this.error_message.id >= 0) {
-						content.messenger.remove(this.error_message);
+					if (this.error_message != null) {
+						this.error_message.close();
 					}
-					this.error_message = content.messenger.message({
+					this.error_message = new xch.Message({
 						type: "error",
 						title: error.type,
-						text: error.detail
+						text: error.detail,
+						on: {
+							close: {
+								callback_data: this,
+								callback: this_private.on_error_message_close
+							}
+						}
 					});
 
 					// Clear status
@@ -3991,7 +4366,7 @@ var xch = (function () {
 					this.submitting.parsing = false;
 					this.submitting.ajax = null;
 					this.submitting.cleared_fields = false;
-					this.container.find(".submit").removeClass("active");
+					this.container.find(".qr_submit").removeClass("active");
 
 					// Cooldown
 					this_private.cooldown_start.call(this, "cooldown" in error ? error.cooldown : null, true);
@@ -4007,7 +4382,7 @@ var xch = (function () {
 					// Error checking
 					var error = content.check_html_for_error(html);
 					if (error !== null) {
-						this_private.submit_posting_error_check.call(this, ajax_data, error);
+						var cooldown_type = this_private.submit_posting_error_check.call(this, ajax_data, error) ? "context_error" : "posting_error";
 
 						// Remove last "."
 						if (error[error.length - 1] == "." && error.substr(-2) != "..") {
@@ -4017,7 +4392,7 @@ var xch = (function () {
 						this_private.submit_error.call(this, {
 							type: "Posting Error",
 							detail: error,
-							cooldown: "posting_error"
+							cooldown: cooldown_type
 						});
 						return false;
 					}
@@ -4098,7 +4473,7 @@ var xch = (function () {
 					}
 
 					// Post context
-					this_private.acquire_post_context_from_html.call(this, html, ajax_data.qr_target_thread);
+					this_private.acquire_post_context_from_html.call(this, html, ajax_data.qr_target_thread, true);
 				},
 				submit_complete: function (ajax_data, aborted) {
 					// Submission complete
@@ -4121,7 +4496,7 @@ var xch = (function () {
 					this.submitting.cleared_fields = false;
 
 					// Clear status
-					this.container.find(".submit").removeClass("active");
+					this.container.find(".qr_submit").removeClass("active");
 
 					// Enable cooldown to finish
 					this.cooldown.retry_number = 0;
@@ -4145,13 +4520,13 @@ var xch = (function () {
 				},
 
 				update_retry_number_display: function () {
-					var status = this.container.find(".status");
+					var status = this.container.find(".qr_status");
 
 					if (this.cooldown.retry_number == 0) {
-						status.find(".attempt").addClass("hidden").text("");
+						status.find(".qr_status_attempt").addClass("hidden").text("");
 					}
 					else {
-						status.find(".attempt").removeClass("hidden").text("attempt " + (this.cooldown.retry_number + 1));
+						status.find(".qr_status_attempt").removeClass("hidden").text("attempt " + (this.cooldown.retry_number + 1));
 					}
 				},
 
@@ -4174,7 +4549,7 @@ var xch = (function () {
 						this.submitting.queued = true;
 
 						// Change status
-						this.container.find(".submit").addClass("retry");
+						this.container.find(".qr_submit").addClass("retry");
 						this_private.submit_status_change.call(this, "Cooldown timer...", "cooldown", 1 - (this.cooldown.time / this.cooldown.time_total));
 					}
 
@@ -4259,7 +4634,7 @@ var xch = (function () {
 						// Done
 						this.cooldown.complete = true;
 						this.cooldown.bar.addClass("ready");
-						this.container.find(".submit").removeClass("retry");
+						this.container.find(".qr_submit").removeClass("retry");
 
 						// Retry
 						if (this.submitting.queued) {
@@ -4276,8 +4651,8 @@ var xch = (function () {
 
 				compare_post_name: function () {
 					if (this.container != null) {
-						var field = this.fields.filter(".name");
-						var field_ss = field.parent().children(".saved_settings");
+						var field = this.fields.filter(".qr_name");
+						var field_ss = field.parent().children(".qr_saved_settings");
 
 						if (this.saved_post_settings.name != null && this.saved_post_settings.name.length > 0 && this.post_data[this.post_data_id_current].name.value == this.saved_post_settings.name) {
 							field_ss.removeClass("hidden");
@@ -4291,8 +4666,8 @@ var xch = (function () {
 				},
 				compare_post_email: function () {
 					if (this.container != null) {
-						var field = this.fields.filter(".email");
-						var field_ss = field.parent().children(".saved_settings");
+						var field = this.fields.filter(".qr_email");
+						var field_ss = field.parent().children(".qr_saved_settings");
 
 						if (this.saved_post_settings.email != null && this.saved_post_settings.email.length > 0 && this.post_data[this.post_data_id_current].email.value == this.saved_post_settings.email) {
 							field_ss.removeClass("hidden");
@@ -4322,6 +4697,7 @@ var xch = (function () {
 
 					if (value !== null) {
 						window.localStorage.setItem("name", value);
+						this.saved_post_settings.name = value;
 					}
 
 					this_private.compare_post_name.call(this);
@@ -4341,6 +4717,7 @@ var xch = (function () {
 
 					if (value !== null) {
 						window.localStorage.setItem("email", value);
+						this.saved_post_settings.email = value;
 					}
 
 					this_private.compare_post_email.call(this);
@@ -4417,7 +4794,7 @@ var xch = (function () {
 						content.mark_post_as_me(new_post, ajax_data.qr_submit_data, ajax_data.qr_password, true);
 						this_private.submit_complete.call(self, ajax_data, false);
 
-						content.messenger.message({
+						new xch.Message({
 							type: "okay",
 							title: "Post Successful",
 							text: "Your thread was successfully submitted"
@@ -4531,7 +4908,7 @@ var xch = (function () {
 							this_private.submit_complete.call(self, ajax_data, false);
 
 							// Message
-							content.messenger.message({
+							new xch.Message({
 								type: "okay",
 								title: "Post Successful",
 								text: "Your post was successfully submitted"
@@ -4669,13 +5046,13 @@ var xch = (function () {
 						this.set_file(pd.file.file, pd.file.name);
 
 						// File spoiler
-						if (!(o = this.fields.filter(".file_spoiler")).attr("readonly")) o.prop("checked", pd.spoiler.value);
+						if (!(o = this.fields.filter(".qr_file_spoiler")).attr("readonly")) o.prop("checked", pd.spoiler.value);
 
 						// Fields
-						if (!(o = this.fields.filter(".name")).attr("readonly")) o.val(pd.name.value);
-						if (!(o = this.fields.filter(".email")).attr("readonly")) o.val(pd.email.value);
-						if (!(o = this.fields.filter(".subject")).attr("readonly")) o.val(pd.subject.value);
-						if (!(o = this.fields.filter(".comment")).attr("readonly")) o.val(pd.comment.value);
+						if (!(o = this.fields.filter(".qr_name")).attr("readonly")) o.val(pd.name.value);
+						if (!(o = this.fields.filter(".qr_email")).attr("readonly")) o.val(pd.email.value);
+						if (!(o = this.fields.filter(".qr_subject")).attr("readonly")) o.val(pd.subject.value);
+						if (!(o = this.fields.filter(".qr_comment")).attr("readonly")) o.val(pd.comment.value);
 
 						this_private.compare_post_name.call(this);
 						this_private.compare_post_email.call(this);
@@ -4689,23 +5066,25 @@ var xch = (function () {
 						if (info.index) {
 							// New
 							this.target_thread_is_current = false;
-
-							this.container.attr("target_thread", "new");
-							this.main_label_target_link.text("New Thread");
 							this.target_thread = null;
+
+							if (this.container != null) {
+								this.container.attr("target_thread", "new");
+								this.main_label_target_link.attr("target_thread", "New Thread");
+							}
 						}
 						else {
 							// Current
 							this.target_thread_is_current = true;
-
-							this.container.attr("target_thread", "current");
 							this.target_thread = null;
+
 							for (var i = 0; i < content.threads.length; ++i) {
 								if (content.threads[i].visible) {
 									this.target_thread = content.threads[i];
 									break;
 								}
 							}
+
 							// Delay, in case this happened before threads were parsed
 							if (this.target_thread == null && !("on_content_thread_new" in this)) {
 								var self = this;
@@ -4715,17 +5094,28 @@ var xch = (function () {
 									self.on_content_thread_new = null;
 								}));
 							}
+
+							if (this.container != null) {
+								this.container.attr("target_thread", "current");
+								this.main_label_target_link.attr("target_thread", "");
+							}
 						}
-						this.main_label_target_link.removeAttr("href");
+						if (this.container != null) {
+							this.main_label_target_link.removeAttr("href");
+						}
 					}
 					else {
 						// Thread
 						this.target_thread_is_current = false;
-
-						this.container.attr("target_thread", target_thread.id);
-						this.main_label_target_link.text(">>" + target_thread.id);
-						this.main_label_target_link.attr("href", info.create_url.to_thread(target_thread.board, target_thread.id));
 						this.target_thread = target_thread;
+
+						if (this.container != null) {
+							this.container.attr("target_thread", target_thread.id);
+
+							this.main_label_target_link
+							.attr("target_thread", ">>" + target_thread.id)
+							.attr("href", info.create_url.to_thread(target_thread.board, target_thread.id));
+						}
 					}
 				},
 				set_persistency: function (persistent, no_save) {
@@ -4751,37 +5141,40 @@ var xch = (function () {
 
 						// Create thread list
 						var click_event = function (event) {
-							this.data.qr.set_target(this.data.thread);
-							this.menu.close();
+							event.data.callback_data.qr.set_target(event.data.callback_data.thread);
+							event.data.option.menu.close();
 							return false;
 						};
+
 						var options = [];
 						if (info.index) {
 							options.push({
 								html: (
-									style.e("a")
-									.addClass("thread_selection")
+									style.e("a", "thread_selection")
 									.text("New Thread")
 									.attr("target_thread", "new")
 								),
-								data: { qr: this, thread: null },
-								events: {
-									click: click_event
+								on: {
+									click: {
+										callback_data: { qr: this, thread: null },
+										callback: click_event
+									}
 								}
 							});
 							for (var i = 0; i < content.threads.length; ++i) {
 								if (content.threads[i].visible) {
 									options.push({
 										html: (
-											style.e("a")
-											.addClass("thread_selection")
+											style.e("a", "thread_selection")
 											.attr("href", info.create_url.to_thread(content.threads[i].board, content.threads[i].id))
 											.text(">>" + content.threads[i].id)
 											.attr("target_thread", content.threads[i].id)
 										),
-										data: { qr: this, thread: content.threads[i] },
-										events: {
-											click: click_event
+										on: {
+											click: {
+												callback_data: { qr: this, thread: content.threads[i] },
+												callback: click_event
+											}
 										}
 									});
 								}
@@ -4790,14 +5183,15 @@ var xch = (function () {
 						else {
 							options.push({
 								html: (
-									style.e("a")
-									.addClass("thread_selection")
+									style.e("a", "thread_selection")
 									.text("Current Thread")
 									.attr("target_thread", "current")
 								),
-								data: { qr: this, thread: null },
-								events: {
-									click: click_event
+								on: {
+									click: {
+										callback_data: { qr: this, thread: null },
+										callback: click_event
+									}
 								}
 							});
 						}
@@ -4808,7 +5202,7 @@ var xch = (function () {
 							keep_on_screen: true,
 							fixed_z: null,
 							open: "down",
-							events: {
+							on: {
 								close: function (event2) {
 									self.target_selector = null;
 								}
@@ -4895,8 +5289,8 @@ var xch = (function () {
 					this.size.width = Math.max(width, this.size_min.width);
 					this.size.height = Math.max(height, this.size_min.height);
 					if (this.container != null) {
-						this.container.children(".container").css("width", this.size.width + "px");
-						this.container.find(".comment").css("height", this.size.height + "px");
+						this.container.children(".popup_content").css("width", this.size.width + "px");
+						this.container.find(".qr_comment").css("height", this.size.height + "px");
 					}
 
 					// Update
@@ -4912,7 +5306,7 @@ var xch = (function () {
 				},
 
 				validage_post: function (post_data) {
-					var req = this.requirements[this.target_thread == null ? "new_thread" : "reply"];
+					var req = (this.target_thread == null ? this.requirements.new_thread : this.requirements.reply);
 
 					if (req.image) {
 						if (post_data.file.file == null) {
@@ -4985,10 +5379,10 @@ var xch = (function () {
 					return null;
 				},
 				set_file: function (file, name) {
-					if (this.container == null || this.container.find(".file").attr("readonly")) return;
+					if (this.container == null || this.container.find(".qr_file").attr("readonly")) return;
 
-					var fs = this.container.find(".file_settings");
-					var fn = this.container.find(".file_name");
+					var fs = this.container.find(".qr_file_settings");
+					var fn = this.container.find(".qr_file_name");
 
 					if (file === null) {
 						// Nullify
@@ -5004,7 +5398,7 @@ var xch = (function () {
 						var err = this.validate_file(file, name);
 						if (err != null) {
 							// Show error
-							content.messenger.message({
+							new xch.Message({
 								type: "error",
 								title: "File Error",
 								text: err.detail
@@ -5028,7 +5422,7 @@ var xch = (function () {
 					return true;
 				},
 				set_file_name: function (name) {
-					if (this.container.find(".file").attr("readonly") || this.post_data[this.post_data_id_current].file.file == null) {
+					if (this.container == null || this.container.find(".qr_file").attr("readonly") || this.post_data[this.post_data_id_current].file.file == null) {
 						return null;
 					}
 
@@ -5038,7 +5432,7 @@ var xch = (function () {
 
 					// Visible
 					if (this.container != null) {
-						var fn = this.container.find(".file_name");
+						var fn = this.container.find(".qr_file_name");
 						fn.val(this.post_data[this.post_data_id_current].file.name);
 					}
 
@@ -5049,7 +5443,7 @@ var xch = (function () {
 				focus_comment: function () {
 					if (this.container == null) return;
 
-					var com = this.container.find(".comment");
+					var com = this.container.find(".qr_comment");
 					if (com.length > 0) {
 						// Selection
 						var sel = this.post_data[this.post_data_id_current].comment.selection;
@@ -5077,7 +5471,7 @@ var xch = (function () {
 						this.clear();
 					}
 					// Quote
-					var com = this.fields.filter(".comment");
+					var com = this.fields.filter(".qr_comment");
 					if (com.length > 0 && !com.attr("readonly")) {
 						// Selection
 						var sel = this.post_data[this.post_data_id_current].comment.selection;
@@ -5117,464 +5511,11 @@ var xch = (function () {
 
 		})(),
 
-		// Menu
-		Menu: (function () {
-
-			function Menu(parent, params, source) {
-				var self = this;
-
-				// Parent
-				this.parent = parent;
-				this.source = source;
-				this.open = !source;
-
-				// Settings
-				this.keep_on_screen = params.keep_on_screen || false;
-				this.close_on_mouseleave = params.close_on_mouseleave || false;
-				this.fit_width_min = params.fit_width_min || false;
-				this.fit_height_min = params.fit_height_min || false;
-				this.max_idle_time = ("max_idle_time" in params ? params.max_idle_time : 0);
-				this.fixed_z = ("fixed_z" in params ? params.fixed_z : null);
-				this.use_fixed_z = ("fixed_z" in params);
-				if (params.open == "up") this.open_direction = 0;
-				else if (params.open == "down") this.open_direction = 1;
-				else if (params.open == "left") this.open_direction = 2;
-				else this.open_direction = 3; // right/default
-
-				// Options
-				this.options = [];
-				this.option_expanded = null;
-
-				// Container
-				(this.container = style.e("div"))
-				.addClass("menu")
-				.append(
-					style.e("div").addClass("background")
-				)
-				.append(
-					(this.options_container = style.e("div"))
-					.addClass("options")
-				);
-				if (!this.open) this.container.addClass("hidden");
-
-				// Add
-				var par = this.parent.parents("body").find(".floating.container");
-				if (par.length > 0) par.first().append(this.container);
-
-				// Add options
-				if ("options" in params) {
-					for (var i = 0; i < params.options.length; ++i) {
-						this.add_option(params.options[i]);
-					}
-				}
-
-				// Closing
-				this.close_timer = null;
-
-				// Update
-				if (this.open) {
-					this.update();
-				}
-
-				// Custom events
-				this.events = {
-					open: [],
-					close: []
-				};
-				if ("events" in params) {
-					for (var e in params.events) {
-						this.on(e, params.events[e]);
-					}
-				}
-
-				// Timeout init
-				this.can_click_to_close = false;
-				setTimeout(function () {
-					self.can_click_to_close = true;
-				}, 50);
-				this.max_idle_timer = null;
-				if (this.max_idle_time > 0) {
-					this.max_idle_timer = setTimeout(function () {
-						self.close();
-					}, this.max_idle_time * 1000);
-				}
-
-				// Events
-				this.registered_events = [];
-				var ev_data = { menu: this };
-				this_private.register_event.call(this, this.container, "mouseenter", function (event) {
-					if (event.data.menu.max_idle_timer !== null) {
-						clearTimeout(event.data.menu.max_idle_timer);
-						event.data.menu.max_idle_timer = null;
-					}
-				}, ev_data);
-				this_private.register_event.call(this, this.container, "mouseleave", function (event) {
-					if (event.data.menu.close_on_mouseleave) event.data.menu.close();
-				}, ev_data);
-				this_private.register_event.call(this, this.container, "click", function (event) {
-					if (event.which != 1) return true;
-
-					if (event.data.menu.close_timer !== null) {
-						clearTimeout(event.data.menu.close_timer);
-						event.data.menu.close_timer = null;
-					}
-
-					return false;
-				}, ev_data);
-				this_private.register_event.call(this, $(document), "click", function (event) {
-					if (event.which != 1 || !event.data.menu.can_click_to_close) return true;
-
-					if (event.data.menu.close_timer === null) {
-						event.data.menu.close_timer = setTimeout(function () {
-							event.data.menu.close_timer = null;
-							event.data.menu.close();
-						}, 50);
-					}
-				}, ev_data);
-				this_private.register_event.call(this, $(window), "scroll", function (event) {
-					event.data.menu.update();
-				}, ev_data);
-				this_private.register_event.call(this, $(window), "resize", function (event) {
-					event.data.menu.update();
-				}, ev_data);
-			};
-
-			var this_private = {
-
-				register_event: function (object, event, callback, data) {
-					this.registered_events.push([object,event,callback]);
-					object.on(event, null, data || null, callback);
-				},
-				unregister_events: function () {
-					for (var i = 0; i < this.registered_events.length; ++i) {
-						this.registered_events[i][0].off(this.registered_events[i][1], null, this.registered_events[i][2]);
-					}
-					this.registered_events = [];
-				},
-				destroy: function () {
-					// Remove events
-					this_private.unregister_events.call(this);
-					// Remove container
-					this.container.remove();
-					// Destroy children
-					for (var i = 0; i < this.options.length; ++i) {
-						this.options[i].destroy();
-					}
-				},
-
-				trigger: function (event, data) {
-					// Trigger an event
-					var e = this.events[event];
-					for (var i = 0, j = e.length; i < j; ++i) {
-						e[i].call(this, data, event);
-					}
-				}
-
-			};
-
-			Menu.prototype = {
-
-				constructor: Menu,
-
-				add_option: function (params) {
-					// Create
-					var opt = new Option(params, this);
-
-					// Done
-					return opt;
-				},
-				update: function (full) {
-					// Skip
-					if (this.container.hasClass("hidden")) return;
-
-					var self = this;
-
-					// Fixed?
-					this.fixed = false;
-					var p_parents = this.parent.parents();
-					var z_index = 0;
-					p_parents.each(function () {
-						var me = $(this);
-						if (me.css("position").indexOf("fixed") >= 0) self.fixed = true;
-
-						var zi = me.css("z-index");
-						if (zi != "auto") z_index = zi;
-					});
-					if (this.fixed) this.container.addClass("fixed");
-					else this.container.removeClass("fixed");
-					if (this.use_fixed_z) {
-						if (this.fixed_z !== null) {
-							this.container.css("z-index", this.fixed_z);
-						}
-					}
-					else {
-						this.container.css("z-index", parseInt(z_index) + 10);
-					}
-
-					// Update size, etc.
-					if (this.fit_width_min) {
-						this.container.css("min-width", this.parent.width().toFixed(2) + "px");
-					}
-					if (this.fit_height_min) {
-						this.container.css("min-height", this.parent.height().toFixed(2) + "px");
-					}
-
-					// Position vars
-					var win = $(window);
-					var win_scroll = {
-						left: win.scrollLeft(),
-						top: win.scrollTop()
-					};
-					var screen_area = content.header.get_screen_area();
-					var p_pos = this.parent.offset();
-					var p_size = [ this.parent.width() , this.parent.height() ];
-					var c_size = [ this.container.width() , this.container.height() ];
-					if (this.fixed) {
-						p_pos.left -= win_scroll.left;
-						p_pos.top -= win_scroll.top;
-					}
-					else {
-						screen_area.left += win_scroll.left;
-						screen_area.top += win_scroll.top;
-					}
-					p_pos = [ p_pos.left , p_pos.top ];
-					var screen_pos = [ screen_area.left , screen_area.top ];
-					var screen_size = [ screen_area.width , screen_area.height ];
-
-					// Open direction
-					var dirs = [ true , true ], ind;
-					switch (this.open_direction) {
-						case 0: // up
-						{
-							dirs[0] = false;
-							ind = 1;
-						}
-						break;
-						case 1: // down
-						{
-							dirs[0] = true;
-							ind = 1;
-						}
-						break;
-						case 2: // left
-						{
-							dirs[0] = false;
-							ind = 0;
-						}
-						break;
-						case 3: // right
-						{
-							dirs[0] = true;
-							ind = 0;
-						}
-						break;
-					}
-					var l2r = [ "left" , "right" ];
-					var u2d = [ "top" , "bottom" ];
-					var pos = [ 0 , 0 ];
-
-					// Main axis
-					for (var d = 0, dir; d < 2; ++d) {
-						dir = dirs[d];
-						for (var i = 0; i < 2; ++i) {
-							pos[ind] = p_pos[ind] + (dir ? (d == 0 ? p_size[ind] : 0) : -c_size[ind] + (d == 0 ? 0 : p_size[ind]));
-							if ((pos[ind] + (dir ? c_size[ind] : -c_size[ind]) > screen_pos[ind] + (dir ? screen_size[ind] : 0)) == dir) {
-								dir = !dir;
-							}
-							else break;
-						}
-						// Bound
-						if (pos[ind] + c_size[ind] > screen_pos[ind] + screen_size[ind]) pos[ind] = screen_pos[ind] + screen_size[ind] - c_size[ind];
-						if (pos[ind] < screen_pos[ind]) pos[ind] = screen_pos[ind];
-						// Next axis
-						ind = 1 - ind;
-					}
-					this.container.css("left", pos[0] + "px");
-					this.container.css("top", pos[1] + "px");
-
-					// Update children menus
-					for (var i = 0; i < this.options.length; ++i) {
-						if (this.options[i].sub_menu != null) {
-							this.options[i].sub_menu.update();
-						}
-					}
-				},
-				open: function () {
-					if (this.container.hasClass("hidden")) {
-						this.container.removeClass("hidden");
-						this.update();
-						// Event
-						this_private.trigger.call(this, "open", {
-							menu: this
-						});
-					}
-				},
-				close: function () {
-					// Unexpand anything open
-					if (this.option_expanded != null) {
-						this.option_expanded.unexpand();
-					}
-
-					// Close
-					if (this.source) {
-						// Hide
-						this.container.addClass("hidden");
-					}
-					else {
-						// Destroy
-						this_private.destroy.call(this);
-					}
-
-					// Event
-					this_private.trigger.call(this, "close", {
-						menu: this
-					});
-				},
-
-				on: function (event, callback) {
-					if (event in this.events) {
-						this.events[event].push(callback);
-					}
-				},
-				off: function (event, callback) {
-					if (event in this.events) {
-						var e = this.events[event];
-						for (var i = 0, j = e.length; i < j; ++i) {
-							if (e[i] == callback) {
-								e.splice(i, 1);
-								--i;
-							}
-						}
-					}
-				}
-
-			};
-
-			var Option = (function () {
-
-				function Option(params, parent) {
-					this.menu = parent;
-
-					// Sub menus
-					this.sub_menu = null;
-					this.expand_on_click = ("expand_on_click" in params ? params.expand_on_click : true);
-					this.expand_on_hover = ("expand_on_hover" in params ? params.expand_on_hover : true);
-
-					// Data
-					this.data = params.data || null;
-
-					// Container
-					(this.container = style.e("div")).addClass("option");
-					if ("text" in params) {
-						this.container.text(params.text);
-					}
-					else if ("html" in params) {
-						if (typeof(params.html) == typeof("")) {
-							this.container.html(params.html);
-						}
-						else {
-							this.container = params.html.addClass("option");
-						}
-					}
-					else {
-						this.container.text("null");
-					}
-					// Other stuff
-					var conts = this.container.contents();
-					conts.wrap(style.e("div").addClass("content"));
-					this.container.prepend(
-						style.e("div").addClass("background")
-					);
-
-					// Events
-					this.registered_events = [];
-					var data = {
-						option: this,
-						click: null,
-						mouseenter: null,
-						mouseleave: null
-					};
-					if ("events" in params) {
-						if ("click" in params.events) data.click = params.events.click;
-						if ("mouseenter" in params.events) data.mouseenter = params.events.mouseenter;
-						if ("mouseleave" in params.events) data.mouseleave = params.events.mouseleave;
-					}
-					this.container
-					.on("click", data, function (event) {
-						if (event.which != 1) return true;
-
-						var r;
-						if (event.data.click) {
-							r = event.data.click.call(event.data.option, event);
-						}
-						if (event.data.option.sub_menu != null && event.data.option.expand_on_click) {
-							event.data.option.expand();
-						}
-						return r;
-					})
-					.on("mouseenter", data, function (event) {
-						var r;
-						if (event.data.mouseenter) {
-							r = event.data.mouseenter.call(event.data.option, event);
-						}
-						if (event.data.option.sub_menu != null && event.data.option.expand_on_hover) {
-							event.data.option.expand();
-						}
-						return r;
-					})
-					.on("mouseleave", data, function (event) {
-						var r;
-						if (event.data.mouseleave) {
-							r = event.data.mouseleave.call(event.data.option, event);
-						}
-						return r;
-					});
-
-					// Add
-					this.menu.options_container.append(this.container);
-					this.menu.options.push(this);
-
-					// TODO :Sub menu
-				};
-
-				Option.prototype = {
-
-					constructor: Option,
-
-					expand: function () {
-						if (this.menu.option_expanded != null) {
-							this.menu.option_expanded.unexpand();
-						}
-						this.sub_menu.open();
-						this.menu.option_expanded = this;
-					},
-					unexpand: function () {
-						this.sub_menu.close();
-						this.menu.option_expanded = null;
-					},
-					destroy: function () {
-						this_private.unregister_events.call(this);
-
-						if (this.sub_menu != null) {
-							this_private.destroy.call(this.sub_menu);
-						}
-					}
-
-				};
-
-				return Option;
-
-			})();
-
-			return Menu;
-
-		})(),
-
 
 		// Auto-updater
 		Updater: (function () {
 
-			function Updater(html) {
+			var Updater = function (html) {
 				var self = this;
 
 				this.thread = null;
@@ -5843,82 +5784,66 @@ var xch = (function () {
 					var s_enabled, s_countdown, s_progress_bar, s_totals;
 
 					content.floating_container.append(
-						(this.container = style.e("div"))
-						.addClass("updater")
+						(this.container = style.e("div", "updater"))
 						.append(
-							style.e("div")
-							.addClass("background")
+							style.e("div", "updater_background")
 						)
 						.append( //{ Small
-							style.e("div")
-							.addClass("small")
+							style.e("div", "updater_small")
 							.append(
-								(s_enabled = style.create_checkbox(false, "small"))
-								.addClass("enabled")
+								(s_enabled = style.checkbox(false, "small"))
+								.addClass("updater_small_item enabled")
 								.attr("title", "Auto reload")
 							)
 							.append(
-								style.e("span")
-								.addClass("difference hidden")
+								style.e("span", "updater_difference updater_small_item hidden")
 								.append(
-									style.e("span")
-									.addClass("added counts hidden")
+									style.e("span", "updater_difference_added updater_counts hidden")
 									.append(
-										style.e("span")
+										style.e("span", "updater_counts_inner")
 										.append(
-											style.e("span")
-											.addClass("posts hidden")
+											style.e("span", "updater_counts_posts hidden")
 										)
 										.append(
-											style.e("span")
-											.addClass("images hidden")
+											style.e("span", "updater_counts_images hidden")
 										)
 									)
 								)
 								.append(
-									style.e("span")
-									.addClass("removed counts hidden")
+									style.e("span", "updater_difference_removed updater_counts hidden")
 									.append(
-										style.e("span")
+										style.e("span", "updater_counts_inner")
 										.append(
-											style.e("span")
-											.addClass("posts hidden")
+											style.e("span", "updater_counts_posts hidden")
 										)
 										.append(
-											style.e("span")
-											.addClass("images hidden")
+											style.e("span", "updater_counts_images hidden")
 										)
 									)
 								)
 							)
 							.append(
-								(this.small_countdown = style.e("a"))
-								.addClass("countdown")
+								(this.small_countdown = style.e("a", "updater_countdown updater_small_item"))
 								.attr("title", "Update now")
 								.append(
-									(s_progress_bar = style.e("div"))
-									.addClass("progress bar")
+									(s_progress_bar = style.e("div", "updater_progress"))
 									.append(
-										style.e("div")
-										.addClass("inner")
+										style.e("div", "updater_progress_inner")
 									)
 								)
 								.append(
-									(this.small_countdown_text = style.e("span"))
+									(this.small_countdown_text = style.e("span", "updater_countdown_suffix"))
 								)
 							)
 							.append(
-								(s_totals = style.e("span"))
-								.addClass("total counts hidden")
+								(s_totals = style.e("span", "updater_counts updater_totals updater_small_item hidden"))
 								.append(
-									style.e("span")
+									style.e("span", "updater_counts_inner")
 									.append(
-										style.e("span")
-										.addClass("posts")
+										style.e("span", "updater_counts_posts")
 									)
 									.append(
-										style.e("span")
-										.addClass("images hidden")
+										style.e("span", "updater_counts_images hidden")
 									)
 								)
 							)
@@ -5936,7 +5861,7 @@ var xch = (function () {
 
 					// Events
 					var data = { self: this };
-					var g_data = { self: this, grabber: s_totals, header_container: content.header.container, header_options: content.header.container.find(".custom>.options") };
+					var g_data = { self: this, grabber: s_totals, header_container: content.header.container, header_options: content.header.container.find(".header_options") };
 
 					s_enabled.find("input").on("change", data, this_private.on_enabler_click);
 					this.small_countdown.on("click", data, this_private.on_countdown_click);
@@ -6063,7 +5988,7 @@ var xch = (function () {
 					this_private.disallow_auto.call(this);
 
 					// Signal 404'd
-					content.messenger.message({
+					new xch.Message({
 						type: "info",
 						title: "Thread 404'd",
 						text: "This thread no longer exists"
@@ -6081,7 +6006,7 @@ var xch = (function () {
 							this_private.disallow_auto.call(this);
 
 							// Message
-							content.messenger.message({
+							new xch.Message({
 								type: "info",
 								title: "Thread Locked",
 								text: "This thread is now locked"
@@ -6091,7 +6016,7 @@ var xch = (function () {
 							this_private.allow_auto.call(this);
 
 							// Message
-							content.messenger.message({
+							new xch.Message({
 								type: "info",
 								title: "Thread Unlocked",
 								text: "This thread is now unlocked"
@@ -6105,19 +6030,18 @@ var xch = (function () {
 
 						// Message
 						if (this.thread.sticky) {
-							content.messenger.message({
+							new xch.Message({
 								type: "info",
 								title: "Thread Stickied",
 								text: "This thread is now a sticky"
 							});
 						}
 						else {
-							content.messenger.message({
+							new xch.Message({
 								type: "info",
 								title: "Thread Unstickied",
 								text: "This thread is no longer a sticky"
 							});
-
 						}
 					}
 				},
@@ -6379,13 +6303,19 @@ var xch = (function () {
 					this.small_countdown.addClass("error");
 
 					// Signal error
-					if (this.error_message != null && this.error_message.id >= 0) {
-						content.messenger.remove(this.error_message);
+					if (this.error_message != null) {
+						this.error_message.close();
 					}
-					this.error_message = content.messenger.message({
+					this.error_message = new xch.Message({
 						type: "error",
 						title: "Updater Error",
-						text: event.reason
+						text: event.reason,
+						on: {
+							close: {
+								callback_data: this,
+								callback: this_private.on_error_message_close
+							}
+						}
 					});
 				},
 				on_loader_complete: function (event, loader) {
@@ -6417,7 +6347,7 @@ var xch = (function () {
 				},
 				on_loader_progress: function (event, loader) {
 					// Update percent
-					this.progress_bars.children(".inner").css("width", (event.ratio * 100).toFixed(2) + "%");
+					this.progress_bars.children().css("width", (event.ratio * 100).toFixed(2) + "%");
 				},
 				on_loader_status_change: function (event, loader) {
 					// Update styling of the progress bars
@@ -6428,7 +6358,7 @@ var xch = (function () {
 						{
 							this.progress_bars
 							.removeClass("ajax parse")
-							.find(".inner")
+							.children()
 								.removeClass("parse")
 								.addClass("ajax")
 								.css("width", (loader.ajax_progress * 100).toFixed() + "%");
@@ -6441,7 +6371,7 @@ var xch = (function () {
 							this.progress_bars
 							.removeClass("parse")
 							.addClass("ajax")
-							.find(".inner")
+							.children()
 								.removeClass("ajax")
 								.addClass("parse")
 								.css("width", (loader.parse_progress * 100).toFixed() + "%");
@@ -6452,12 +6382,16 @@ var xch = (function () {
 							this.progress_bars
 							.removeClass("ajax")
 							.addClass("parse")
-							.find(".inner")
+							.children()
 								.removeClass("ajax parse")
 								.css("width", "0%");
 						}
 						break;
 					}
+				},
+
+				on_error_message_close: function (event, self) {
+					self.error_message = null;
 				},
 
 				increment_value: function (target, images, count) {
@@ -6472,10 +6406,10 @@ var xch = (function () {
 					if (target == this.totals) {
 						var limits = this.limits[(this.thread && this.thread.sticky) ? "sticky" : "normal"];
 
-						var c1 = this.container.find(".small .total");
+						var c1 = this.container.find(".updater_totals");
 						c1.removeClass("hidden");
 						if (images) {
-							var c2 = c1.find(".images");
+							var c2 = c1.find(".updater_counts_images");
 							if (value > 0) c2.removeClass("hidden");
 							else c2.addClass("hidden");
 							c2.text(value);
@@ -6487,7 +6421,7 @@ var xch = (function () {
 							}
 						}
 						else {
-							var c2 = c1.find(".posts");
+							var c2 = c1.find(".updater_counts_posts");
 							c2.text(value);
 
 							if (value > limits.posts && limits.posts > 0) {
@@ -6509,7 +6443,7 @@ var xch = (function () {
 						c1.attr("title", alt_title);
 					}
 					else {
-						var c1 = this.container.find(".small .difference");
+						var c1 = this.container.find(".updater_difference");
 						if (
 							value > 0 ||
 							this.change.added.posts > 0 || this.change.added.images > 0 ||
@@ -6521,7 +6455,7 @@ var xch = (function () {
 							c1.addClass("hidden");
 						}
 
-						var c2 = c1.find(target == this.change.added ? ".added" : ".removed");
+						var c2 = c1.find(target == this.change.added ? ".updater_difference_added" : ".updater_difference_removed");
 						if (target.posts > 0 || target.images > 0) {
 							c2.removeClass("hidden");
 						}
@@ -6529,7 +6463,7 @@ var xch = (function () {
 							c2.addClass("hidden");
 						}
 
-						var c3 = c2.find(images ? ".images" : ".posts");
+						var c3 = c2.find(images ? ".updater_counts_images" : ".updater_counts_posts");
 						if (value > 0) {
 							c3.removeClass("hidden");
 						}
@@ -6818,13 +6752,13 @@ var xch = (function () {
 						this.position.in_header = in_header;
 
 						if (in_header) {
-							content.header.container.find(".custom>.options").prepend(this.container);
-							this.container.addClass("embedded option");
+							content.header.container.find(".header_options").prepend(this.container);
+							this.container.addClass("header_option no_link embedded");
 							if (!dont_set_position) this.set_position(this.position.x, this.position.y, true, true);
 						}
 						else {
 							content.floating_container.append(this.container);
-							this.container.removeClass("embedded option");
+							this.container.removeClass("header_option no_link embedded");
 							if (!dont_set_position) this.set_position(this.position.x, this.position.y, true, true);
 						}
 
@@ -6854,7 +6788,7 @@ var xch = (function () {
 		// Loader
 		Loader: (function () {
 
-			function Loader(board, thread) {
+			var Loader = function (board, thread) {
 				this.board = board;
 				this.thread = thread;
 				this.posts_total = 0;
@@ -7111,7 +7045,7 @@ var xch = (function () {
 				trigger: function (event, data) {
 					// Trigger an event
 					var e = this.events[event];
-					for (var i = 0, j = e.length; i < j; ++i) {
+					for (var i = 0; i < e.length; ++i) {
 						e[i].call(this, data, event);
 					}
 				},
@@ -7277,10 +7211,10 @@ var xch = (function () {
 		})(),
 
 
-		// Message list
-		Messenger: (function () {
+		// Messages
+		Message: (function () {
 
-			function Messenger(html) {
+			var Messenger = function () {
 				this.container = null;
 
 				this.default_message_life = 10;
@@ -7292,234 +7226,108 @@ var xch = (function () {
 				};
 
 				this.messages = [];
-				this.popups = [];
-				this.popup_moving = {
-					popup: null,
-					events: null,
-					offset: {
-						x: 0,
-						y: 0
-					}
-				};
-				this.anchor_border_size = 10;
 
 				this.paused = false;
 
-				this.message_events = {
-					close: []
-				};
-				this.popup_events = {
-					close: []
-				};
-
-				this_private.init.call(this, html);
+				this.init();
 
 				var data = { self: this };
 				$(window)
-				.on("blur", data, function (event) {
-					this_private.pause_all.call(event.data.self);
-				})
-				.on("focus", data, function (event) {
-					this_private.resume_all.call(event.data.self);
-				});
-			};
-
-			var this_private = {
-
-				init: function (html) {
-					content.floating_container.append(
-						(this.container = style.e("div"))
-						.addClass("messenger")
-					);
-				},
-
-				position_message: function (m_data) {
-					var min = m_data.message.hasClass("minimized");
-
-					var m_pre = null, i = m_data.id - 1;
-					for (; i >= 0; --i) {
-						m_pre = this.messages[i];
-						if (m_pre.message.hasClass("minimized") == min) break;
-					}
-					if (i < 0) m_pre = null;
-
-					if (m_pre == null) {
-						// From top
-						var area = content.header.get_screen_area();
-						m_data.message.css("top", (area.top + this.spacing.from_top) + "px");
-					}
-					else {
-						// From other message
-						var m_pre_pos = m_pre.message.offset();
-						var m_pre_height = m_pre.message.outerHeight();
-
-						m_pre_pos.top -= $(window).scrollTop();
-
-						m_data.message.css("top", (m_pre_pos.top + m_pre_height + (min ? this.spacing.from_minimized : this.spacing.from_message)) + "px");
-					}
-				},
-
-				on_close_minimize_click: function (event) {
-					if (event.which != 1) return true;
-
-					if ($(this).hasClass("close")) {
-						event.data.self.remove(event.data.m_data);
-					}
-					else {
-						event.data.self.set_minimized(event.data.m_data, !event.data.m_data.message.hasClass("minimized"));
-					}
-
-					return false;
-				},
-				on_message_click: function (event) {
-					if (event.which != 1) return true;
-
-					if (event.data.m_data.life_countdown !== null) {
-						event.data.self.set_lifetime(event.data.m_data, 0);
-					}
-				},
-
-				pause: function (m_data) {
-					if (m_data.life_countdown !== null) {
-						clearInterval(m_data.life_countdown);
-						m_data.life_countdown = null;
-					}
-				},
-				pause_all: function () {
-					this.paused = true;
-
-					for (var i = 0; i < this.messages.length; ++i) {
-						this_private.pause.call(this, this.messages[i]);
-					}
-				},
-				resume_all: function () {
-					this.paused = false;
-
-					for (var i = 0; i < this.messages.length; ++i) {
-						this.set_lifetime(this.messages[i], this.messages[i].life);
-					}
-				},
-
-				on_popup_move_mousedown: function (event) {
-					if (event.which != 1) return true;
-
-					// Stop
-					if (event.data.messenger.popup_moving.popup != null) {
-						this_private.popup_move_stop.call(event.data.messenger);
-					}
-
-					// Start
-					var e1, e2, e3;
-					$(window)
-					.on("mousemove", event.data, e1 = (this_private.on_popup_move_mousemove))
-					.on("scroll", event.data, e2 = (this_private.on_popup_move_mousemove))
-					.on("mouseup", event.data, e3 = (function (event) {
-						this_private.popup_move_stop.call(event.data.messenger);
-					}));
-
-					event.data.messenger.popup_moving.popup = event.data.popup;
-					event.data.messenger.popup_moving.events = [ e1 , e2 , e3 ];
-
-					var o = event.data.popup.container.offset();
-					event.data.messenger.popup_moving.offset.x = event.pageX - o.left;
-					event.data.messenger.popup_moving.offset.y = event.pageY - o.top;
-
-					// Done
-					return false;
-				},
-				on_popup_move_mousemove: function (event) {
-					var win = $(window);
-					var x = event.pageX - win.scrollLeft() - event.data.messenger.popup_moving.offset.x;
-					var y = event.pageY - win.scrollTop() - event.data.messenger.popup_moving.offset.y;
-
-					event.data.messenger.popup_position(event.data.popup, x, y, false);
-				},
-				popup_move_stop: function () {
-					if (this.popup_moving.popup != null) {
-						// Turn off events
-						$(window)
-						.off("mousemove", this.popup_moving.events[0])
-						.off("scroll", this.popup_moving.events[1])
-						.off("mouseup", this.popup_moving.events[2]);
-						// Nullify
-						this.popup_moving.events = null;
-						this.popup_moving.popup = null;
-					}
-				},
-
-				trigger_message: function (m_data, event, data) {
-					var evs = this.message_events[event];
-					for (var i = 0; i < evs.length; ++i) {
-						if (evs[i][0] == m_data) {
-							evs[i][1].call(this, m_data, data, evs[i][2], event);
-						}
-					}
-				},
-				trigger_popup: function (popup, event, data) {
-					var evs = this.popup_events[event];
-					for (var i = 0; i < evs.length; ++i) {
-						if (evs[i][0] == popup) {
-							evs[i][1].call(this, popup, data, evs[i][2], event);
-						}
-					}
-				},
-
-				remove_events_message: function (m_data) {
-					for (var ev in this.message_events) {
-						var evs = this.message_events[ev];
-						for (var i = 0; i < evs.length; ++i) {
-							if (evs[i][0] == m_data) {
-								evs.splice(i, 1);
-								--i;
-							}
-						}
-					}
-				},
-				remove_events_popup: function (popup) {
-					for (var ev in this.popup_events) {
-						var evs = this.popup_events[ev];
-						for (var i = 0; i < evs.length; ++i) {
-							if (evs[i][0] == popup) {
-								evs.splice(i, 1);
-								--i;
-							}
-						}
-					}
-				}
-
+				.on("blur", data, this.on_window_blur)
+				.on("focus", data, this.on_window_focus);
 			};
 
 			Messenger.prototype = {
 
 				constructor: Messenger,
 
-				message: function (params) {
-					var m_data = {};
-					var data = { self: this, m_data: m_data };
+				init: function () {
+					this.container = style.e("div", "message_container");
+					if (content && content.floating_container) {
+						content.floating_container.append(this.container);
+					}
+				},
 
-					m_data.message = style.e("div", "message");
-					m_data.message.append(style.e("div").addClass("background"));
-					var inner = style.e("div");
-					m_data.message.append(inner.addClass("inner"));
+				on_window_blur: function (event) {
+					event.data.self.pause_all();
+				},
+				on_window_focus: function (event) {
+					event.data.self.resume_all();
+				},
+
+				pause_all: function () {
+					this.paused = true;
+
+					for (var i = 0; i < this.messages.length; ++i) {
+						this_private.pause.call(this.messages[i]);
+					}
+				},
+				resume_all: function () {
+					this.paused = false;
+
+					for (var i = 0; i < this.messages.length; ++i) {
+						this.messages[i].set_lifetime(this.messages[i].life);
+					}
+				}
+
+			};
+
+			var messenger = null;
+
+
+
+			var Message = function (params) {
+				// Create a messenger
+				if (messenger == null) messenger = new Messenger();
+
+				// Events
+				this.events = {
+					close: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					}
+				};
+
+				// Data
+				this.container = null;
+				this.timer_display = null;
+				this.life = 0;
+				this.life_countdown = null;
+				this.closeable = true;
+				this.minimized = false;
+
+				// Init
+				this_private.init.call(this, params);
+			};
+
+			var this_private = {
+
+				init: function (params) {
+					var data = { self: this };
+
+					this.container = style.e("div", "message");
+					this.container.append(style.e("div", "message_background"));
+					var inner = style.e("div", "message_inner");
+					this.container.append(inner);
 
 					// Style
 					if ("type" in params) {
-						if (params.type == "error") m_data.message.addClass("error");
-						else if (params.type == "good") m_data.message.addClass("good");
-						else if (params.type == "okay") m_data.message.addClass("okay");
-						else if (params.type == "parse") m_data.message.addClass("parse");
-						else if (params.type == "info") m_data.message.addClass("info");
-						else m_data.message.addClass("plain");
+						if (params.type == "error") this.container.addClass("error");
+						else if (params.type == "good") this.container.addClass("good");
+						else if (params.type == "okay") this.container.addClass("okay");
+						else if (params.type == "parse") this.container.addClass("parse");
+						else if (params.type == "info") this.container.addClass("info");
+						else this.container.addClass("plain");
 					}
 					else {
-						m_data.message.addClass("plain");
+						this.container.addClass("plain");
 					}
 
 					// Title
 					if ("title" in params) {
 						inner.append(
-							style.e("div")
-							.addClass("message_title shadow")
+							style.e("div", "message_title message_shadow")
 							.text(params.title)
 						);
 					}
@@ -7527,200 +7335,340 @@ var xch = (function () {
 					// Content
 					if ("html" in params) {
 						inner.append(
-							params.html
-							.addClass("body")
+							params.html.addClass("message_body")
 						);
 					}
 					else if ("text" in params) {
 						inner.append(
-							style.e("div")
-							.addClass("body")
+							style.e("div", "message_body")
 							.text(params.text)
 						);
 					}
 
+					// Events
+					if ("on" in params) {
+						for (var ev in params.on) {
+							if (params.on[ev] instanceof Function) {
+								this.on(ev, params.on[ev], undefined);
+							}
+							else {
+								this.on(ev, params.on[ev].callback, params.on[ev].callback_data);
+							}
+						}
+					}
+
 					// Close button
 					inner.append(
-						style.e("div")
-						.addClass("buttons hover_shadow")
+						style.e("div", "message_buttons message_hover_shadow")
 						.append(
-							style.e("span")
-							.addClass("close")
+							style.e("span", "message_button close")
 							.on("click", data, this_private.on_close_minimize_click)
 						)
 						.append(
-							(m_data.timer_display = style.e("span"))
-							.addClass("timer")
+							(this.timer_display = style.e("span", "message_timer"))
 						)
 					);
 
 					// Timer
-					m_data.life_countdown = null;
-					this.set_closeable(m_data, ("closeable" in params ? params.closeable : true));
-					this.set_lifetime(m_data, ("life" in params ? params.life || 0 : (m_data.closeable ? this.default_message_life : 0)));
-					if (this.paused) this_private.pause.call(this, m_data);
+					this.set_closeable("closeable" in params ? params.closeable : true);
+					this.set_lifetime("life" in params ? params.life || 0 : (this.closeable ? messenger.default_message_life : 0));
+					if (messenger.paused) this_private.pause.call(this);
 
 					// Events
-					m_data.message.on("click", data, this_private.on_message_click);
+					this.container.on("click", data, this_private.on_message_click);
 
 					// Add
-					this.container.append(m_data.message);
+					messenger.container.append(this.container);
 
-					m_data.id = this.messages.length;
-					this.messages.push(m_data);
+					this.id = messenger.messages.length;
+					messenger.messages.push(this);
 
 					// Position
-					this_private.position_message.call(this, m_data);
-
-					// Done
-					return m_data;
+					this_private.set_position.call(this);
 				},
-				remove: function (m_data) {
-					if (m_data.id < 0) return;
 
-					this_private.trigger_message.call(this, m_data, "close", {});
-					this_private.remove_events_message.call(this, m_data);
+				set_position: function () {
+					var min = this.minimized;
+
+					var m_pre = null, i = this.id - 1;
+					for (; i >= 0; --i) {
+						m_pre = messenger.messages[i];
+						if (m_pre.minimized == min) break;
+					}
+					if (i < 0) m_pre = null;
+
+					if (m_pre == null) {
+						// From top
+						var area = content.header.get_screen_area();
+						this.container.css("top", (area.top + messenger.spacing.from_top) + "px");
+					}
+					else {
+						// From other message
+						var m_pre_pos = m_pre.container.offset();
+						var m_pre_height = m_pre.container.outerHeight();
+
+						m_pre_pos.top -= $(window).scrollTop();
+
+						this.container.css("top", (m_pre_pos.top + m_pre_height + (min ? messenger.spacing.from_minimized : messenger.spacing.from_message)) + "px");
+					}
+				},
+
+				on_close_minimize_click: function (event) {
+					if (event.which != 1) return true;
+
+					if ($(this).hasClass("close")) {
+						event.data.self.close();
+					}
+					else {
+						event.data.self.set_minimized(!event.data.self.minimized);
+					}
+
+					return false;
+				},
+				on_message_click: function (event) {
+					if (event.which != 1) return true;
+
+					if (event.data.self.life_countdown !== null) {
+						event.data.self.set_lifetime(0);
+					}
+				},
+
+				pause: function () {
+					if (this.life_countdown !== null) {
+						clearInterval(this.life_countdown);
+						this.life_countdown = null;
+					}
+				},
+
+				trigger: function (event, data) {
+					// Trigger an event
+					var e = this.events[event];
+					e.triggering = true;
+					for (var i = 0, j = e.callbacks.length; i < j; ++i) {
+						e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
+					}
+					e.triggering = false;
+					if (e.removals != null) {
+						for (var i = 0; i < e.removals.length; ++i) {
+							this.off(event, e.removals[i]);
+						}
+						e.removals = null;
+					}
+				}
+
+			};
+
+			Message.prototype = {
+
+				constructor: Message,
+
+				close: function () {
+					if (this.id < 0) return;
+
+					// Events
+					this_private.trigger.call(this, "close", {});
+					this.events = {};
+
+					// Remove events
+					this.container.find(".message_button").off("click", this_private.on_close_minimize_click);
+					this.container.off("click", this_private.on_message_click);
 
 					// Stop timer
-					if (m_data.life_countdown !== null) {
-						clearInterval(m_data.life_countdown);
-						m_data.life_countdown = null;
+					if (this.life_countdown !== null) {
+						clearInterval(this.life_countdown);
+						this.life_countdown = null;
 					}
 
 					// Remove html
-					m_data.message.remove();
+					this.container.remove();
+					this.container = null;
 
 					// Remove
-					this.messages.splice(m_data.id, 1);
+					messenger.messages.splice(this.id, 1);
 
 					// Update others
-					for (var i = m_data.id; i < this.messages.length; ++i) {
-						this.messages[i].id = i;
-						this_private.position_message.call(this, this.messages[i]);
+					for (var i = this.id; i < messenger.messages.length; ++i) {
+						messenger.messages[i].id = i;
+						this_private.set_position.call(messenger.messages[i]);
 					}
 
 					// Done
-					m_data.id = -1;
+					this.id = -1;
 				},
-				set_minimized: function (m_data, minimized) {
+
+				is_open: function () {
+					return (this.id >= 0);
+				},
+
+				set_minimized: function (minimized) {
 					// Set to minimized
+					this.minimized = minimized;
 					if (minimized) {
-						m_data.message.addClass("minimized");
+						this.container.addClass("minimized");
 					}
 					else {
-						m_data.message.removeClass("minimized");
+						this.container.removeClass("minimized");
 					}
 
 					// Reposition
-					for (var i = m_data.id; i < this.messages.length; ++i) {
-						this_private.position_message.call(this, this.messages[i]);
+					for (var i = this.id; i < messenger.messages.length; ++i) {
+						this_private.set_position.call(messenger.messages[i]);
 					}
 				},
-				set_lifetime: function (m_data, life) {
-					m_data.life = (arguments.length > 1 ? life : this.default_message_life);
+				set_lifetime: function (life) {
+					this.life = (arguments.length > 0 ? life : messenger.default_message_life);
 
-					if (m_data.life > 0) {
+					if (this.life > 0) {
 						var self = this;
 
 						// Text
-						m_data.timer_display.text(m_data.life).removeClass("hidden");
+						this.timer_display.text(this.life).removeClass("hidden");
 
 						// Start timer
-						if (m_data.life_countdown !== null) {
-							clearInterval(m_data.life_countdown);
+						if (this.life_countdown !== null) {
+							clearInterval(this.life_countdown);
 						}
-						m_data.life_countdown = setInterval(function () {
-							m_data.life -= 1;
-							if (m_data.life > 0) {
-								m_data.timer_display.text(m_data.life);
+						this.life_countdown = setInterval(function () {
+							self.life -= 1;
+							if (self.life > 0) {
+								self.timer_display.text(self.life);
 							}
 							else {
-								m_data.timer_display.text("").removeClass("hidden");
+								self.timer_display.text("").removeClass("hidden");
 							}
-							if (m_data.life <= 0) {
+							if (self.life <= 0) {
 								// Clear timer
-								clearInterval(m_data.life_countdown);
-								m_data.life_countdown = null;
+								clearInterval(self.life_countdown);
+								self.life_countdown = null;
+
 								// Remove
-								if (m_data.message.find(".close,.minimize").hasClass("close")) {
-									self.remove(m_data);
+								if (self.container.find(".close,.minimize").hasClass("close")) {
+									self.close();
 								}
 								else {
-									self.set_minimized(m_data, true);
+									self.set_minimized(true);
 								}
 							}
 						}, 1000);
 					}
 					else {
-						m_data.timer_display.text("").addClass("hidden");
+						this.timer_display.text("").addClass("hidden");
 
-						if (m_data.life_countdown !== null) {
-							clearInterval(m_data.life_countdown);
-							m_data.life_countdown = null;
+						if (this.life_countdown !== null) {
+							clearInterval(this.life_countdown);
+							this.life_countdown = null;
 						}
 					}
 				},
-				set_closeable: function (m_data, closeable) {
-					m_data.closeable = closeable;
-					if (m_data.closeable) {
+				set_closeable: function (closeable) {
+					this.closeable = closeable;
+					if (closeable) {
 						// Button
-						m_data.message.find(".close,.minimize").removeClass("minimize").addClass("close");
-						m_data.timer_display.removeClass("hidden");
+						this.container.find(".message_button").removeClass("minimize").addClass("close");
+						this.timer_display.removeClass("hidden");
 					}
 					else {
 						// Minimize
-						m_data.message.find(".close,.minimize").removeClass("close").addClass("minimize");
-						m_data.timer_display.addClass("hidden");
+						this.container.find(".message_button").removeClass("close").addClass("minimize");
+						this.timer_display.addClass("hidden");
 					}
 				},
-				set_type: function (m_data, type) {
-					style.set_class(m_data.message, "message");
+				set_type: function (type) {
+					style.set_class(this.container, "message");
 
-					if (type == "error") m_data.message.addClass("error");
-					else if (type == "good") m_data.message.addClass("good");
-					else if (type == "okay") m_data.message.addClass("okay");
-					else if (type == "parse") m_data.message.addClass("parse");
-					else if (type == "info") m_data.message.addClass("info");
-					else m_data.message.addClass("plain");
+					if (type == "error") this.container.addClass("error");
+					else if (type == "good") this.container.addClass("good");
+					else if (type == "okay") this.container.addClass("okay");
+					else if (type == "parse") this.container.addClass("parse");
+					else if (type == "info") this.container.addClass("info");
+					else this.container.addClass("plain");
 				},
 
-				on_message: function (m_data, event, callback, data) {
-					if (event in this.message_events) {
-						this.message_events[event].push([m_data, callback, data]);
+				on: function (event, callback, callback_data) {
+					// callback format: function (event_data, callback_data, event_name) with (this instanceof xch.Message)
+					if (event in this.events) {
+						// Add
+						this.events[event].callbacks.push([callback, callback_data]);
 					}
 				},
-
-				popup: function (params) {
-					var message_content, title_bar, close;
-					var popup = {
-						open: true,
-						container: style.e("div"),
-						position: {
-							x: 0,
-							y: 0,
-							anchor: {
-								x: 0,
-								y: 0
+				off: function (event, callback) {
+					if (event in this.events) {
+						var e = this.events[event];
+						if (e.triggering) {
+							// Queue for removal
+							if (e.removals == null) e.removals = [];
+							e.removals.push(callback);
+						}
+						else {
+							// Remove any callbacks
+							e = e.callbacks;
+							for (var i = 0; i < e.length; ++i) {
+								if (e[i][0] == callback) {
+									e.splice(i, 1);
+									--i;
+								}
 							}
-						},
-						text_input: null
-					};
+						}
+					}
+				}
 
-					popup.container
-					.addClass("popup")
+			};
+
+			return Message;
+
+		})(),
+
+		// Popups
+		Popup: (function () {
+
+			var Popup = function (params) {
+				this.moving = {
+					active: false,
+					offset: {
+						x: 0,
+						y: 0
+					}
+				};
+				this.anchor_border_size = 10;
+
+				this.events = {
+					close: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					}
+				};
+
+				this.open = true;
+				this.container = null;
+				this.position = {
+					x: 0,
+					y: 0,
+					anchor: {
+						x: 0,
+						y: 0
+					}
+				};
+				this.text_input = null;
+
+				this_private.init.call(this, params);
+			};
+
+			var this_private = {
+
+				init: function (params) {
+					var message_content, title_bar, close;
+
+					(this.container = style.e("div", "popup"))
 					.append(
-						style.e("div")
-						.addClass("background")
+						style.e("div", "popup_background")
 					)
 					.append(
-						(message_content = style.e("div"))
-						.addClass("content")
+						(message_content = style.e("div", "popup_content"))
 						.append(
-							(title_bar = style.e("div"))
-							.addClass("title bar")
+							(title_bar = style.e("div", "popup_title_bar popup_content_item"))
 							.append(
-								(close = style.e("span"))
-								.addClass("close")
+								(close = style.e("span", "popup_close"))
 							)
 						)
 					);
@@ -7730,16 +7678,14 @@ var xch = (function () {
 					}
 					if ("title" in params) {
 						title_bar.append(
-							style.e("span")
-							.addClass("title")
+							style.e("span", "popup_title")
 							.text(params.title)
 						);
 					}
 					if ("description" in params) {
 						var d;
 						message_content.append(
-							(d = style.e("div"))
-							.addClass("description")
+							(d = style.e("div", "popup_description popup_content_item"))
 						);
 						if (typeof(params.description) == typeof("")) {
 							d.text(params.description);
@@ -7750,62 +7696,74 @@ var xch = (function () {
 					}
 					if ("textarea" in params) {
 						if (params.textarea.single_line) {
-							popup.text_input = style.e("input").attr("type", "text");
+							this.text_input = style.e("input", "popup_input popup_content_item").attr("type", "text");
 						}
 						else {
-							popup.text_input = style.e("textarea");
+							this.text_input = style.e("textarea", "popup_input popup_content_item");
 						}
-						message_content.append(popup.text_input);
+						message_content.append(this.text_input);
 
 						if ("value" in params.textarea) {
-							popup.text_input.val(params.textarea.value);
+							this.text_input.val(params.textarea.value);
 						}
 						if ("height" in params.textarea) {
-							popup.text_input.css("height", params.textarea.height + "px");
+							this.text_input.css("height", params.textarea.height + "px");
 						}
 						if ("readonly" in params.textarea) {
-							popup.text_input.attr("readonly", "readonly");
+							this.text_input.attr("readonly", "readonly");
 						}
 					}
 					if ("buttons" in params) {
 						var buttons, button;
 						message_content.append(
-							(buttons = style.e("div"))
-							.addClass("buttons")
+							(buttons = style.e("div", "popup_buttons popup_content_item"))
 						);
 						for (var i = 0; i < params.buttons.length; ++i) {
 							buttons.append(
-								(button = style.e("button"))
+								(button = style.e("button", "popup_button"))
 								.text(params.buttons[i].text)
 							);
 							if ("on" in params.buttons[i]) {
 								for (var ev in params.buttons[i].on) {
-									button.on(ev, { popup: popup, messenger: this, data: params.buttons[i].on[ev].data }, params.buttons[i].on[ev].callback);
+									if (params.buttons[i].on[ev] instanceof Function) {
+										button.on(ev, { popup: this, callback_data: undefined }, params.buttons[i].on[ev]);
+									}
+									else {
+										button.on(ev, { popup: this, callback_data: params.buttons[i].on[ev].callback_data }, params.buttons[i].on[ev].callback);
+									}
 								}
 							}
 						}
 					}
 					if ("size" in params) {
 						if ("width" in params.size) {
-							popup.container.css("width", params.size.width + "px");
+							this.container.css("width", params.size.width + "px");
 						}
 					}
 					if ("on" in params) {
 						for (var ev in params.on) {
-							this.on_popup(popup, ev, params.on[ev].callback, params.on[ev].data);
+							if (params.on[ev] instanceof Function) {
+								this.on(ev, params.on[ev], undefined);
+							}
+							else {
+								this.on(ev, params.on[ev].callback, params.on[ev].callback_data);
+							}
 						}
 					}
 
-					content.floating_container.append(popup.container);
+					// Add
+					if (content && content.floating_container) {
+						content.floating_container.append(this.container);
+					}
 
 					// Position
-					var w = popup.container.outerWidth();
-					var h = popup.container.outerHeight();
+					var w = this.container.outerWidth();
+					var h = this.container.outerHeight();
 					var area = content.header.get_screen_area();
-					this.popup_position(popup, (area.left + (area.width - w) / 2), (area.top + (area.height - h) / 2), true);
+					this.set_position((area.left + (area.width - w) / 2), (area.top + (area.height - h) / 2), true);
 
 					// Events
-					var data = { popup: popup, messenger: this };
+					var data = { popup: this };
 					var cancel_event = function (event) {
 						return (event.which == 1);
 					};
@@ -7813,96 +7771,795 @@ var xch = (function () {
 					.on("click", data, function (event) {
 						if (event.which != 1) return true;
 
-						event.data.messenger.popup_close(event.data.popup);
+						event.data.popup.close();
 
 						return false;
 					});
-					title_bar.on("mousedown", data, this_private.on_popup_move_mousedown);
-
-					// Add
-					this.popups.push(popup);
-					return popup;
+					title_bar.on("mousedown", data, this_private.on_grabber_mousedown);
 				},
-				popup_position: function (popup, x, y, no_anchor_updates) {
-					popup.position.x = x;
-					popup.position.y = y;
 
-					var bounds = content.header.get_screen_area();
-					var size = {
-						w: popup.container.outerWidth(),
-						h: popup.container.outerHeight()
-					};
+				on_grabber_mousedown: function (event) {
+					if (event.which != 1) return true;
 
-					// Bounds updating
-					if (!no_anchor_updates || popup.position.anchor.x == 0) {
-						popup.position.anchor.x = 0;
-						if (x + size.w > bounds.left + bounds.width - this.anchor_border_size) {
-							popup.position.anchor.x = 1;
-						}
-						if (x < bounds.left + this.anchor_border_size) {
-							popup.position.anchor.x = -1;
-						}
+					// Stop
+					var moving = event.data.popup.moving;
+					if (moving.active) {
+						this_private.move_stop.call(event.data.messenger);
 					}
 
-					if (!no_anchor_updates || popup.position.anchor.y == 0) {
-						popup.position.anchor.y = 0;
-						if (y + size.h > bounds.top + bounds.height - this.anchor_border_size) {
-							popup.position.anchor.y = 1;
-						}
-						if (y < bounds.top + this.anchor_border_size) {
-							popup.position.anchor.y = -1;
-						}
-					}
+					// Start
+					$(window)
+					.on("mousemove", event.data, this_private.on_window_mousemove_scroll)
+					.on("scroll", event.data, this_private.on_window_mousemove_scroll)
+					.on("mouseup", event.data, this_private.on_window_mouseup);
 
-					// Position
-					if (popup.position.anchor.x == 0) {
-						popup.container.css("left", x + "px").css("right", "");
-					}
-					else if (popup.position.anchor.x == -1) {
-						popup.container.css("left", bounds.left + "px").css("right", "");
-					}
-					else {
-						popup.container.css("right", ($(window).width() - (bounds.left + bounds.width)) + "px").css("left", "");
-					}
+					moving.active = true;
 
-					if (popup.position.anchor.y == 0) {
-						popup.container.css("top", y + "px").css("bottom", "");
-					}
-					else if (popup.position.anchor.y == -1) {
-						popup.container.css("top", bounds.top + "px").css("bottom", "");
-					}
-					else {
-						popup.container.css("bottom", ($(window).height() - (bounds.top + bounds.height)) + "px").css("top", "");
-					}
+					var o = event.data.popup.container.offset();
+					moving.offset.x = event.pageX - o.left;
+					moving.offset.y = event.pageY - o.top;
+
+					// Done
+					return false;
 				},
-				popup_close: function (popup) {
-					if (!popup.open) return;
+				on_window_mousemove_scroll: function (event) {
+					var win = $(window);
+					var off = event.data.popup.moving.offset;
+					var x = event.pageX - win.scrollLeft() - off.x;
+					var y = event.pageY - win.scrollTop() - off.y;
 
-					this_private.trigger_popup.call(this, popup, "close", {});
-					this_private.remove_events_popup.call(this, popup);
+					event.data.popup.set_position(x, y, false);
+				},
+				on_window_mouseup: function (event) {
+					this_private.move_stop.call(event.data.popup);
+				},
+				move_stop: function () {
+					if (this.moving.active) {
+						// Turn off events
+						$(window)
+						.off("mousemove", this_private.on_window_mousemove_scroll)
+						.off("scroll", this_private.on_window_mousemove_scroll)
+						.off("mouseup", this_private.on_window_mouseup);
 
-					for (var i = 0; i < this.popups.length; ++i) {
-						if (popup == this.popups[i]) {
-							popup.open = false;
-							if (this.popup_moving.popup == popup) {
-								this_private.popup_move_stop.call(this);
-							}
-							popup.container.remove();
-							popup.container = null;
-							this.popups.splice(i, 1);
-						}
+						// Stop
+						this.moving.active = false;
 					}
 				},
 
-				on_popup: function (popup, event, callback, data) {
-					if (event in this.popup_events) {
-						this.popup_events[event].push([popup, callback, data]);
+				trigger: function (event, data) {
+					// Trigger an event
+					var e = this.events[event];
+					e.triggering = true;
+					for (var i = 0, j = e.callbacks.length; i < j; ++i) {
+						e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
+					}
+					e.triggering = false;
+					if (e.removals != null) {
+						for (var i = 0; i < e.removals.length; ++i) {
+							this.off(event, e.removals[i]);
+						}
+						e.removals = null;
 					}
 				}
 
 			};
 
-			return Messenger;
+			Popup.prototype = {
+
+				close: function () {
+					if (!this.open) return;
+
+					if (this.moving.active) {
+						this_private.move_stop.call(this);
+					}
+
+					this_private.trigger.call(this, "close", {});
+					this.events = {};
+
+					this.open = false;
+
+					this.container.find(".popup_title_bar").off("mousedown", this_private.on_grabber_mousedown);
+
+					this.container.remove();
+					this.container = null;
+				},
+
+				set_position: function (x, y, no_anchor_updates) {
+					this.position.x = x;
+					this.position.y = y;
+
+					var bounds = content.header.get_screen_area();
+					var size = {
+						w: this.container.outerWidth(),
+						h: this.container.outerHeight()
+					};
+
+					// Bounds updating
+					if (!no_anchor_updates || this.position.anchor.x == 0) {
+						this.position.anchor.x = 0;
+						if (x + size.w > bounds.left + bounds.width - this.anchor_border_size) {
+							this.position.anchor.x = 1;
+						}
+						if (x < bounds.left + this.anchor_border_size) {
+							this.position.anchor.x = -1;
+						}
+					}
+
+					if (!no_anchor_updates || this.position.anchor.y == 0) {
+						this.position.anchor.y = 0;
+						if (y + size.h > bounds.top + bounds.height - this.anchor_border_size) {
+							this.position.anchor.y = 1;
+						}
+						if (y < bounds.top + this.anchor_border_size) {
+							this.position.anchor.y = -1;
+						}
+					}
+
+					// Position
+					if (this.position.anchor.x == 0) {
+						this.container.css("left", x + "px").css("right", "");
+					}
+					else if (this.position.anchor.x == -1) {
+						this.container.css("left", bounds.left + "px").css("right", "");
+					}
+					else {
+						this.container.css("right", ($(window).width() - (bounds.left + bounds.width)) + "px").css("left", "");
+					}
+
+					if (this.position.anchor.y == 0) {
+						this.container.css("top", y + "px").css("bottom", "");
+					}
+					else if (this.position.anchor.y == -1) {
+						this.container.css("top", bounds.top + "px").css("bottom", "");
+					}
+					else {
+						this.container.css("bottom", ($(window).height() - (bounds.top + bounds.height)) + "px").css("top", "");
+					}
+				},
+
+				is_open: function () {
+					return (this.container != null);
+				},
+
+				on: function (event, callback, callback_data) {
+					// callback format: function (event_data, callback_data, event_name) with (this instanceof xch.Popup)
+					if (event in this.events) {
+						// Add
+						this.events[event].callbacks.push([callback, callback_data]);
+					}
+				},
+				off: function (event, callback) {
+					if (event in this.events) {
+						var e = this.events[event];
+						if (e.triggering) {
+							// Queue for removal
+							if (e.removals == null) e.removals = [];
+							e.removals.push(callback);
+						}
+						else {
+							// Remove any callbacks
+							e = e.callbacks;
+							for (var i = 0; i < e.length; ++i) {
+								if (e[i][0] == callback) {
+									e.splice(i, 1);
+									--i;
+								}
+							}
+						}
+					}
+				}
+
+			};
+
+			return Popup;
+
+		})(),
+
+		// Menu
+		Menu: (function () {
+
+			var Menu = function (parent, params, source) {
+				// Parent
+				this.parent = parent;
+				this.source = source;
+				this.open = !source;
+
+				// Settings
+				this.keep_on_screen = false;
+				this.close_on_mouseleave = false;
+				this.fit_width_min = false;
+				this.fit_height_min = false;
+				this.max_idle_time = 0;
+				this.fixed_z = null;
+				this.use_fixed_z = true;
+				this.open_direction = 1;
+				this.ready = false;
+				this.anchor = null;
+				this.menu_class = null;
+
+				// Options
+				this.options = [];
+				this.option_expanded = null;
+
+				// Container
+				this.container = null;
+				this.options_container = null;
+
+				// Closing
+				this.close_timer = null;
+
+				// Custom events
+				this.events = {
+					open: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					},
+					close: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					}
+				};
+
+				// Timeout init
+				this.can_click_to_close = false;
+				this.max_idle_timer = null;
+
+				// Events
+				this.registered_events = [];
+
+				// Init
+				this_private.init.call(this, params);
+			};
+
+			var this_private = {
+
+				init: function (params) {
+					var self = this;
+
+					// Settings
+					this.keep_on_screen = params.keep_on_screen || false;
+					this.close_on_mouseleave = params.close_on_mouseleave || false;
+					this.fit_width_min = params.fit_width_min || false;
+					this.fit_height_min = params.fit_height_min || false;
+					this.max_idle_time = ("max_idle_time" in params ? params.max_idle_time : 0);
+					this.fixed_z = ("fixed_z" in params ? params.fixed_z : null);
+					this.use_fixed_z = ("fixed_z" in params);
+					if (params.open == "up") this.open_direction = 0;
+					else if (params.open == "down") this.open_direction = 1;
+					else if (params.open == "left") this.open_direction = 2;
+					else this.open_direction = 3; // right/default
+
+					// Anchors
+					if ("anchor" in params) {
+						this.anchor = {};
+						if (params.anchor.x) {
+							this.anchor.x = [ params.anchor.x.container , params.anchor.x.container_side == "right" , params.anchor.x.menu_side == "right" ];
+						}
+						if (params.anchor.y) {
+							this.anchor.y = [ params.anchor.y.container , params.anchor.y.container_side == "bottom" , params.anchor.y.menu_side == "bottom" ];
+						}
+					}
+
+					// Container
+					(this.container = style.e("div", "menu"))
+					.append(
+						style.e("div", "menu_background")
+					)
+					.append(
+						(this.options_container = style.e("div", "menu_options"))
+					);
+					if (!this.open) this.container.addClass("hidden");
+					if ("menu_class" in params) {
+						this.menu_class = params.menu_class;
+						this.container.addClass(params.menu_class);
+					}
+					if ("menu_class_inherit" in params) {
+						this.menu_class = params.menu_class_inherit;
+					}
+
+					// Add options
+					if ("options" in params) {
+						for (var i = 0; i < params.options.length; ++i) {
+							this.add_option(params.options[i]);
+						}
+					}
+
+					// Add
+					content.floating_container.append(this.container);
+
+					// Update
+					if (this.open) {
+						this.update();
+					}
+
+					// Ready
+					this.ready = true;
+
+					// Events
+					if ("on" in params) {
+						for (var ev in params.on) {
+							if (params.on[ev] instanceof Function) {
+								this.on(ev, params.on[ev], undefined);
+							}
+							else {
+								this.on(ev, params.on[ev].callback, params.on[ev].callback_data);
+							}
+						}
+					}
+
+					// Timeout init
+					setTimeout(function () {
+						self.can_click_to_close = true;
+					}, 50);
+					if (this.max_idle_time > 0) {
+						this.max_idle_timer = setTimeout(function () {
+							self.max_idle_timer = null;
+							self.close();
+						}, this.max_idle_time * 1000);
+					}
+
+					// Events
+					var ev_data = { menu: this };
+					this_private.register_event.call(this, this.container, "mouseenter", function (event) {
+						if (event.data.menu.max_idle_timer !== null) {
+							clearTimeout(event.data.menu.max_idle_timer);
+							event.data.menu.max_idle_timer = null;
+						}
+					}, ev_data);
+					this_private.register_event.call(this, this.container, "mouseleave", function (event) {
+						if (event.data.menu.close_on_mouseleave) event.data.menu.close();
+					}, ev_data);
+					this_private.register_event.call(this, this.container, "click", function (event) {
+						if (event.which != 1) return true;
+
+						if (event.data.menu.close_timer !== null) {
+							clearTimeout(event.data.menu.close_timer);
+							event.data.menu.close_timer = null;
+						}
+
+						return false;
+					}, ev_data);
+					this_private.register_event.call(this, $(document), "click", function (event) {
+						if (event.which != 1 || !event.data.menu.can_click_to_close) return true;
+
+						if (event.data.menu.close_timer === null) {
+							var event_data = event.data;
+							event_data.menu.close_timer = setTimeout(function () {
+								event_data.menu.close_timer = null;
+								event_data.menu.close();
+							}, 50);
+						}
+					}, ev_data);
+					this_private.register_event.call(this, $(window), "scroll", function (event) {
+						// TODO : Delay
+						event.data.menu.update();
+					}, ev_data);
+					this_private.register_event.call(this, $(window), "resize", function (event) {
+						// TODO : Delay
+						event.data.menu.update();
+					}, ev_data);
+				},
+
+				register_event: function (object, event, callback, data) {
+					this.registered_events.push([object,event,callback]);
+					object.on(event, null, data || null, callback);
+				},
+				unregister_events: function () {
+					for (var i = 0; i < this.registered_events.length; ++i) {
+						this.registered_events[i][0].off(this.registered_events[i][1], null, this.registered_events[i][2]);
+					}
+					this.registered_events = [];
+				},
+				destroy: function () {
+					// Remove events
+					this_private.unregister_events.call(this);
+					// Remove container
+					this.container.remove();
+					// Destroy children
+					for (var i = 0; i < this.options.length; ++i) {
+						this.options[i].destroy();
+					}
+				},
+
+				trigger: function (event, data) {
+					// Trigger an event
+					var e = this.events[event];
+					e.triggering = true;
+					for (var i = 0, j = e.callbacks.length; i < j; ++i) {
+						e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
+					}
+					e.triggering = false;
+					if (e.removals != null) {
+						for (var i = 0; i < e.removals.length; ++i) {
+							this.off(event, e.removals[i]);
+						}
+						e.removals = null;
+					}
+				},
+
+				on_option_click: function (event) {
+					if (event.which != 1) return true;
+
+					if (event.data.option.sub_menu != null && event.data.option.expand_on_click) {
+						event.data.option.expand();
+					}
+				},
+				on_option_mouseenter: function (event) {
+					if (event.data.option.expand_on_hover) {
+						if (event.data.option.sub_menu == null) {
+							// Hide
+							if (event.data.option.menu.option_expanded != null) {
+								event.data.option.menu.option_expanded.unexpand();
+							}
+						}
+						else {
+							// Expand
+							event.data.option.expand();
+						}
+					}
+				}
+
+			};
+
+			Menu.prototype = {
+
+				constructor: Menu,
+
+				add_option: function (params) {
+					// Create
+					var opt = new Option(params, this);
+
+					// Needs to update
+					if (this.ready) {
+						this.update();
+					}
+
+					// Done
+					return opt;
+				},
+				update: function (full) {
+					// Skip
+					if (this.container.hasClass("hidden")) return;
+
+					var self = this;
+
+					// Fixed?
+					this.fixed = false;
+					var p_parents = this.parent.parents();
+					var z_index = 0;
+					p_parents.each(function () {
+						var me = $(this);
+						if (me.css("position").indexOf("fixed") >= 0) self.fixed = true;
+
+						var zi = me.css("z-index");
+						if (zi != "auto") z_index = zi;
+					});
+					if (this.fixed) this.container.addClass("fixed");
+					else this.container.removeClass("fixed");
+					if (this.use_fixed_z) {
+						if (this.fixed_z !== null) {
+							this.container.css("z-index", this.fixed_z);
+						}
+					}
+					else {
+						this.container.css("z-index", parseInt(z_index) + 10);
+					}
+
+					// Update size, etc.
+					if (this.fit_width_min) {
+						this.container.css("min-width", this.parent.width().toFixed(2) + "px");
+					}
+					if (this.fit_height_min) {
+						this.container.css("min-height", this.parent.height().toFixed(2) + "px");
+					}
+
+					// Position vars
+					var win = $(window);
+					var win_scroll = {
+						left: win.scrollLeft(),
+						top: win.scrollTop()
+					};
+					var screen_area = content.header.get_screen_area();
+					var p_pos = this.parent.offset();
+					var p_size = [ this.parent.outerWidth() , this.parent.outerHeight() ];
+					var c_size = [ this.container.outerWidth() , this.container.outerHeight() ];
+
+					if (this.fixed) {
+						p_pos.left -= win_scroll.left;
+						p_pos.top -= win_scroll.top;
+					}
+					else {
+						screen_area.left += win_scroll.left;
+						screen_area.top += win_scroll.top;
+					}
+					p_pos = [ p_pos.left , p_pos.top ];
+					var screen_pos = [ screen_area.left , screen_area.top ];
+					var screen_size = [ screen_area.width , screen_area.height ];
+
+					// Open direction
+					var dirs = [ true , true ], ind;
+					switch (this.open_direction) {
+						case 0: // up
+						{
+							dirs[0] = false;
+							ind = 1;
+						}
+						break;
+						case 1: // down
+						{
+							dirs[0] = true;
+							ind = 1;
+						}
+						break;
+						case 2: // left
+						{
+							dirs[0] = false;
+							ind = 0;
+						}
+						break;
+						case 3: // right
+						{
+							dirs[0] = true;
+							ind = 0;
+						}
+						break;
+					}
+					var l2r = [ "left" , "right" ];
+					var u2d = [ "top" , "bottom" ];
+					var x2y = [ "x" , "y" ];
+					var l2t = [ "left" , "top" ];
+					var pos = [ 0 , 0 ];
+
+					// Main axis
+					for (var d = 0, dir, anc; d < 2; ++d) {
+						dir = dirs[d];
+						if (this.anchor && (anc = this.anchor[x2y[ind]])) {
+							pos[ind] = anc[0].offset()[l2t[ind]] + (anc[1] ? (ind == 0 ? anc[0].outerWidth() : anc[0].outerHeight()) : 0) - (anc[2] ? c_size[ind] : 0);
+						}
+						else {
+							for (var i = 0; i < 2; ++i) {
+								pos[ind] = p_pos[ind] + (dir ? (d == 0 ? p_size[ind] : 0) : -c_size[ind] + (d == 0 ? 0 : p_size[ind]));
+								if ((pos[ind] + (dir ? c_size[ind] : -c_size[ind]) > screen_pos[ind] + (dir ? screen_size[ind] : 0)) == dir) {
+									dir = !dir;
+								}
+								else break;
+							}
+						}
+						// Bound
+						if (this.keep_on_screen) {
+							if (pos[ind] + c_size[ind] > screen_pos[ind] + screen_size[ind]) pos[ind] = screen_pos[ind] + screen_size[ind] - c_size[ind];
+							if (pos[ind] < screen_pos[ind]) pos[ind] = screen_pos[ind];
+						}
+						// Next axis
+						ind = 1 - ind;
+					}
+					this.container.css("left", pos[0] + "px");
+					this.container.css("top", pos[1] + "px");
+
+					// Update children menus
+					for (var i = 0; i < this.options.length; ++i) {
+						if (this.options[i].sub_menu != null) {
+							this.options[i].sub_menu.update();
+						}
+					}
+				},
+				show: function () {
+					if (this.container.hasClass("hidden")) {
+						this.container.removeClass("hidden");
+						this.update();
+						// Event
+						this_private.trigger.call(this, "open", {
+							menu: this
+						});
+					}
+				},
+				hide: function () {
+					// Unexpand anything open
+					if (this.option_expanded != null) {
+						this.option_expanded.unexpand();
+					}
+
+					// Hide
+					this.container.addClass("hidden");
+
+					// Event
+					this_private.trigger.call(this, "close", {
+						menu: this
+					});
+				},
+				close: function () {
+					if (this.source) {
+						// Unexpand anything open
+						if (this.option_expanded != null) {
+							this.option_expanded.unexpand();
+						}
+
+						// Hide
+						this.container.addClass("hidden");
+
+						// Event
+						this_private.trigger.call(this, "close", {
+							menu: this
+						});
+
+						// Close source
+						this.source.menu.close();
+					}
+					else {
+						// Unexpand anything open
+						if (this.option_expanded != null) {
+							this.option_expanded.unexpand();
+						}
+
+						// Destroy
+						this_private.destroy.call(this);
+
+						// Event
+						this_private.trigger.call(this, "close", {
+							menu: this
+						});
+					}
+				},
+
+				on: function (event, callback, callback_data) {
+					// callback format: function (event_data, callback_data, event_name) with (this instanceof xch.Message)
+					if (event in this.events) {
+						// Add
+						this.events[event].callbacks.push([callback, callback_data]);
+					}
+				},
+				off: function (event, callback) {
+					if (event in this.events) {
+						var e = this.events[event];
+						if (e.triggering) {
+							// Queue for removal
+							if (e.removals == null) e.removals = [];
+							e.removals.push(callback);
+						}
+						else {
+							// Remove any callbacks
+							e = e.callbacks;
+							for (var i = 0; i < e.length; ++i) {
+								if (e[i][0] == callback) {
+									e.splice(i, 1);
+									--i;
+								}
+							}
+						}
+					}
+				}
+
+			};
+
+			var Option = (function () {
+
+				var Option = function (params, parent) {
+					this.menu = parent;
+
+					// Sub menus
+					this.sub_menu = null;
+					this.expand_on_click = ("expand_on_click" in params ? params.expand_on_click : true);
+					this.expand_on_hover = ("expand_on_hover" in params ? params.expand_on_hover : true);
+					this.order = params.order || 0;
+
+					// Container
+					if ("text" in params) {
+						this.container = style.e("div", "menu_option");
+						this.container.text(params.text);
+					}
+					else if ("html" in params) {
+						if (typeof(params.html) == typeof("")) {
+							this.container = style.e("div", "menu_option");
+							this.container.html(params.html);
+						}
+						else {
+							this.container = style.add_class(params.html.addClass("menu_option"));
+						}
+					}
+					else {
+						this.container = style.e("div", "menu_option");
+						this.container.text("null");
+					}
+
+					// Other stuff
+					var conts = this.container.contents();
+					conts.wrap(style.e("div", "menu_option_content"));
+					this.container.prepend(
+						style.e("div", "menu_option_background")
+					);
+
+					// Events
+					this.registered_events = [];
+					if ("on" in params) {
+						for (var ev in params.on) {
+							if (params.on[ev] instanceof Function) {
+								this.container.on(ev, { option: this, callback_data: undefined }, params.on[ev]);
+							}
+							else {
+								this.container.on(ev, { option: this, callback_data: params.on[ev].callback_data }, params.on[ev].callback);
+							}
+						}
+					}
+					var data = { option: this };
+					this.container
+					.on("click", data, this_private.on_option_click)
+					.on("mouseenter", data, this_private.on_option_mouseenter);
+
+					// Add
+					var i;
+					for (i = this.menu.options.length - 1; i >= 0; --i) {
+						if (this.order >= this.menu.options[i].order) {
+							this.menu.options[i].container.after(this.container);
+							this.menu.options.splice(i + 1, 0, this);
+							break;
+						}
+					}
+					if (i < 0) {
+						this.menu.options_container.prepend(this.container);
+						this.menu.options.splice(0, 0, this);
+					}
+
+					// Sub menu
+					if ("sub_menu" in params) {
+						this.sub_menu = new Menu(this.container, params.sub_menu, this);
+
+						if (!("hidden_expand" in params)) {
+							this.container.addClass("expandable");
+							this.menu.container.children(".menu_options").addClass("expandable");
+						}
+					}
+					else if ("options" in params) {
+						var params_new = {
+							close_on_mouseleave: false,
+							keep_on_screen: this.menu.keep_on_screen,
+							fixed_z: null,
+							open: "right",
+							options: params.options
+						};
+						if (this.menu.menu_class !== null) {
+							params_new.menu_class = this.menu.menu_class;
+						}
+						this.sub_menu = new Menu(this.container, params_new, this);
+
+						if (!("hidden_expand" in params)) {
+							this.container.addClass("expandable");
+							this.menu.container.children(".menu_options").addClass("expandable");
+						}
+					}
+				};
+
+				Option.prototype = {
+
+					constructor: Option,
+
+					expand: function () {
+						if (this.menu.option_expanded != null) {
+							this.menu.option_expanded.unexpand();
+						}
+						this.sub_menu.show();
+						this.menu.option_expanded = this;
+					},
+					unexpand: function () {
+						this.menu.option_expanded = null;
+						this.sub_menu.hide();
+					},
+					destroy: function () {
+						this_private.unregister_events.call(this);
+
+						if (this.sub_menu != null) {
+							this_private.destroy.call(this.sub_menu);
+						}
+					}
+
+				};
+
+				return Option;
+
+			})();
+
+			return Menu;
 
 		})(),
 
@@ -7910,7 +8567,7 @@ var xch = (function () {
 		// Meta information
 		Meta: (function () {
 
-			function Meta() {
+			var Meta = function () {
 				this.page_okay = false;
 				this.page_code = 200;
 
@@ -7963,7 +8620,7 @@ var xch = (function () {
 		// Page information
 		Information: (function () {
 
-			function Information(meta, html) {
+			var Information = function (meta, html) {
 				this.meta = meta;
 
 				this.board = "";
@@ -8063,7 +8720,7 @@ var xch = (function () {
 		// Post parsing queue
 		PostQueue: (function () {
 
-			function PostQueue(max, timeout) {
+			var PostQueue = function (max, timeout) {
 				this.post_queue = [];
 				this.count = 0;
 				this.timer = null;
@@ -8120,7 +8777,7 @@ var xch = (function () {
 		// Page content
 		Content: (function () {
 
-			function Content(main_context) {
+			var Content = function (main_context) {
 				var self = this;
 
 				this.threads = [];
@@ -8133,8 +8790,6 @@ var xch = (function () {
 				this.container = null;
 
 				this.floating_container = null;
-
-				this.messenger = null;
 
 				this.updater = null;
 
@@ -8200,6 +8855,7 @@ var xch = (function () {
 
 				// Delete/reporting
 				this.delete_report_popup = null;
+				this.post_marking_popup = null;
 
 				// Sourcing nodes
 				this.sourcing = [];
@@ -8492,10 +9148,13 @@ var xch = (function () {
 									val = val.replace("\\;", ";");
 									esc = false;
 								}
-								temp.push(val);
+								if (val.length > 0) temp.push(val);
 								break;
 							}
 						}
+
+						// Skip empty lines
+						if (temp.length == 0) continue;
 
 						// Depth check
 						var depth = 0;
@@ -8588,11 +9247,11 @@ var xch = (function () {
 							text: "Cancel",
 							on: {
 								click: {
-									data: data,
+									callback_data: data,
 									callback: function (event) {
 										if (event.which != 1) return true;
 
-										event.data.messenger.popup_close(event.data.popup);
+										event.data.popup.close();
 									}
 								}
 							}
@@ -8600,18 +9259,18 @@ var xch = (function () {
 							text: (data.report ? "Report" : "Delete"),
 							on: {
 								click: {
-									data: data,
+									callback_data: data,
 									callback: function (event) {
 										if (event.which != 1) return true;
 
 										var input_val = (event.data.popup.text_input ? event.data.popup.text_input.val() : null);
 
-										if (event.data.data.action) {
-											close = event.data.data.action.call(event.data.data.self, event.data.data.action_data, input_val);
+										if (event.data.callback_data.action) {
+											close = event.data.callback_data.action.call(event.data.callback_data.self, event.data.callback_data.action_data, input_val);
 										}
 
 										if (close) {
-											event.data.messenger.popup_close(event.data.popup);
+											event.data.popup.close();
 										}
 									}
 								}
@@ -8619,9 +9278,9 @@ var xch = (function () {
 						}],
 						on: {
 							close: {
-								data: data,
-								callback: function (popup, event, data) {
-									data.self.delete_report_popup = null;
+								callback_data: data,
+								callback: function (event, callback_data) {
+									callback_data.self.delete_report_popup = null;
 								}
 							}
 						}
@@ -8636,7 +9295,7 @@ var xch = (function () {
 					}
 
 					// Create
-					this.delete_report_popup = this.messenger.popup(params);
+					this.delete_report_popup = new xch.Popup(params);
 
 					// Select
 					if (data.report) {
@@ -8648,16 +9307,16 @@ var xch = (function () {
 
 					// Create message
 					var pb, pb_inner, message_text;
-					var msg = this.messenger.message({
+					var msg = new xch.Message({
 						type: "info",
 						title: (is_report ? "Reporting Post" : "Deleting Post"),
 						html: (style.e("div").append(
 							(message_text = style.e("div"))
 							.text(is_report ? "Post is being reported..." : (delete_image ? "Image is being deleted..." : "Post is being deleted..."))
 						).append(
-							(pb = style.e("div", "message_progress_bar", "default"))
+							(pb = style.e("div", "message_progress default"))
 							.append(
-								(pb_inner = style.e("div", "message_progress_bar_inner", "active"))
+								(pb_inner = style.e("div", "message_progress_inner active"))
 							)
 						)),
 						closeable: false,
@@ -8712,7 +9371,7 @@ var xch = (function () {
 							self: this,
 							message: msg,
 							progress_bar: pb,
-							progress_bar_inner: pb_inner,
+							progress_inner: pb_inner,
 							message_text: message_text,
 							is_report: is_report,
 							delete_image: delete_image,
@@ -8776,7 +9435,7 @@ var xch = (function () {
 				report_delete_on_progress: function (event) {
 					// Percent update
 					var perc = event.event.loaded / event.event.total;
-					event.data.event_data.progress_bar_inner.css("width", (perc * 100).toFixed(2) + "%");
+					event.data.event_data.progress_inner.css("width", (perc * 100).toFixed(2) + "%");
 				},
 				report_delete_on_error: function (event) {
 					// Connection error
@@ -8794,13 +9453,13 @@ var xch = (function () {
 				},
 
 				report_delete_success: function (event_data) {
-					this.messenger.set_type(event_data.message, "okay");
-					event_data.message.message.find(".message_title").text(event_data.is_report ? "Report Successful" : "Delete Successful");
+					event_data.message.set_type("okay");
+					event_data.message.container.find(".message_title").text(event_data.is_report ? "Report Successful" : "Delete Successful");
 					event_data.message_text.text(event_data.is_report ? "Post was successfully reported" : (event_data.delete_image ? "Image was successfully deleted" : "Post was successfully deleted"));
 					event_data.progress_bar.addClass("hidden");
 
-					this.messenger.set_closeable(event_data.message, true);
-					this.messenger.set_lifetime(event_data.message);
+					event_data.message.set_closeable(true);
+					event_data.message.set_lifetime();
 
 					// If this was a delete, update deleted status
 					if (!event_data.is_report) {
@@ -8813,15 +9472,111 @@ var xch = (function () {
 					}
 				},
 				report_delete_error: function (event_data, error_message) {
-					this.messenger.set_type(event_data.message, "error");
-					event_data.message.message.find(".message_title").text(event_data.is_report ? "Reporting Error" : "Deletion Error");
+					event_data.message.set_type("error");
+					event_data.message.container.find(".message_title").text(event_data.is_report ? "Reporting Error" : "Deletion Error");
 					event_data.message_text.text(error_message);
 					event_data.progress_bar.addClass("hidden");
 
-					this.messenger.set_closeable(event_data.message, true);
-					this.messenger.set_lifetime(event_data.message);
+					event_data.message.set_closeable(true);
+					event_data.message.set_lifetime();
 				},
 
+				spawn_post_marking_popup: function (title, description, button, action, action_data) {
+					var data = { self: this, action: action, action_data: action_data };
+
+					var params = {
+						title: title,
+						description: description,
+						size: {
+							width: 320
+						},
+						buttons: [{
+							text: "Cancel",
+							on: {
+								click: {
+									callback_data: data,
+									callback: function (event) {
+										if (event.which != 1) return true;
+
+										event.data.popup.close();
+									}
+								}
+							}
+						}, {
+							text: button,
+							on: {
+								click: {
+									callback_data: data,
+									callback: function (event) {
+										if (event.which != 1) return true;
+
+										var input_val = (event.data.popup.text_input ? event.data.popup.text_input.val() : null);
+
+										if (event.data.callback_data.action) {
+											close = event.data.callback_data.action.call(event.data.callback_data.self, event.data.callback_data.action_data, input_val);
+										}
+
+										if (close) {
+											event.data.popup.close();
+										}
+									}
+								}
+							}
+						}],
+						on: {
+							close: {
+								callback_data: data,
+								callback: function (event, callback_data) {
+									callback_data.self.post_marking_popup = null;
+								}
+							}
+						}
+					};
+
+					// Create
+					this.post_marking_popup = new xch.Popup(params);
+				},
+
+				sourcing_info_build_menu_options: function (opts, post) {
+					var text, href, sp_allow, options = [];
+
+					for (var i = 0; i < opts.length; ++i) {
+						// Spoiler allowing
+						sp_allow = (post.image == null ? true : ((opts[i].allow_if_spoiler & (post.image.spoiler ? 1 : 2)) != 0));
+						if (sp_allow) {
+							// Format values
+							text = xch.format_string(opts[i].text, this_private.sourcing_format_function, post);
+							href = xch.format_string(opts[i].url, this_private.sourcing_format_function, post);
+							// Add
+							var option = {
+								html: (
+									style.e("a")
+									.attr("target", "_blank")
+									.attr("href", href)
+									.text(text)
+								),
+								on: {
+									click: function (event) {
+										if (event.which != 1) return true;
+										event.data.option.menu.close();
+										return true;
+									}
+								}
+							};
+
+							// Recursive options
+							if (opts[i].options.length > 0) {
+								option.options = this_private.sourcing_info_build_menu_options.call(this, opts[i].options, post);
+							}
+
+							// Add
+							options.push(option);
+						}
+					}
+
+					// Done
+					return options;
+				},
 				sourcing_info_click: function (event) {
 					if (event.which != 1) return true;
 
@@ -8830,36 +9585,7 @@ var xch = (function () {
 					if (opts && opts.length > 0) {
 						// Create menu
 						if (event.data.menu == null) {
-							var post = event.data.post, text, href;
-
-							var options = [];
-							for (var i = 0; i < opts.length; ++i) {
-								// Spoiler allowing
-								var sp_allow = (post.image == null ? true : ((opts[i].allow_if_spoiler & (post.image.spoiler ? 1 : 2)) != 0));
-								if (sp_allow) {
-									// Format values
-									text = xch.format_string(opts[i].text, this_private.sourcing_format_function, post);
-									href = xch.format_string(opts[i].url, this_private.sourcing_format_function, post);
-									// Add
-									options.push({
-										html: (
-											style.e("a")
-											.attr("target", "_blank")
-											.attr("href", href)
-											.text(text)
-										),
-										events: {
-											click: function (event2) {
-												if (event2.which != 1) return true;
-												this.menu.close();
-												return true;
-											}
-										}
-										// TODO : Recursive options?
-									});
-								}
-
-							}
+							var options = this_private.sourcing_info_build_menu_options.call(this, opts, event.data.post);
 
 							// Create
 							if (options.length > 0) {
@@ -8867,12 +9593,13 @@ var xch = (function () {
 									close_on_mouseleave: false,
 									fit_width_min: true,
 									keep_on_screen: true,
+									menu_class: "small",
 									fixed_z: null,
 									open: "down",
-									events: {
-										close: function (event2) {
-											// Nullify
-											event.data.menu = null;
+									on: {
+										close: {
+											callback_data: event.data,
+											callback: this_private.sourcing_info_on_menu_close
 										}
 									},
 									options: options
@@ -8888,6 +9615,10 @@ var xch = (function () {
 						return false;
 					}
 					return true;
+				},
+				sourcing_info_on_menu_close: function (event, event_data) {
+					// Nullify
+					event_data.menu = null;
 				},
 
 				version_check: function () {
@@ -8911,7 +9642,7 @@ var xch = (function () {
 					}
 				},
 				fresh_install_alert: function (version_current) {
-					this.messenger.message({
+					new xch.Message({
 						type: "good",
 						title: "Userscript Installed",
 						html: (
@@ -8983,7 +9714,7 @@ var xch = (function () {
 						change_text += " from ";
 
 						// Message
-						this.messenger.message({
+						new xch.Message({
 							type: "good",
 							title: "Userscript Updated",
 							html: (
@@ -9034,22 +9765,18 @@ var xch = (function () {
 						var cont = this.container.contents();
 						var c = this.container;
 						c.replaceWith(
-							(this.container = style.e("div"))
-							.addClass("content")
+							(this.container = style.e("div", "content"))
 							.html(cont)
 						);
 					}
 
 					// Add floating inline container
 					context.html.find("body").append(
-						(this.floating_container = style.e("div"))
-						.addClass("floating container")
+						(this.floating_container = style.e("div", "floating_inline_container"))
 					);
 
 					// Create header
 					this.header = new xch.Header(context.html);
-					// Create messenger
-					this.messenger = new xch.Messenger(context.html);
 					// Create quick reply
 					this.qr = new xch.QuickReply(context.html);
 					// Create updater
@@ -9310,9 +10037,9 @@ var xch = (function () {
 					this.main_context.html.find("head>title").html((prefix || "") + format + (suffix || ""));
 				},
 
-				on: function (event, callback) {
+				on: function (event, callback, callback_data) {
 					if (event in this.events) {
-						this.events[event].callbacks.push(callback);
+						this.events[event].callbacks.push([callback, callback_data]);
 					}
 				},
 				off: function (event, callback) {
@@ -9324,8 +10051,8 @@ var xch = (function () {
 						}
 						else {
 							e = e.callbacks;
-							for (var i = 0, j = e.length; i < j; ++i) {
-								if (e[i] == callback) {
+							for (var i = 0; i < e.length; ++i) {
+								if (e[i][0] == callback) {
 									e.splice(i, 1);
 									--i;
 								}
@@ -9340,7 +10067,7 @@ var xch = (function () {
 					e.triggering = true;
 					for (var i = 0, j = e.callbacks.length; i < j; ++i) {
 						/*!debug!*/assert(e.callbacks[i], "Bad event in [" + event + "]; " + i + "/" + j+"; "+e.callbacks[i]);
-						e.callbacks[i].call(this, data, event);
+						e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
 					}
 					e.triggering = false;
 					if (e.removals != null) {
@@ -9355,7 +10082,7 @@ var xch = (function () {
 					var post_key = this_private.format_my_post_key.call(this, post.thread.board, post.thread.id, post.id);
 
 					this.my_posts[post_key] = {
-						name: source.name.value,
+						name: (source ? source.name.value : null),
 						password: password,
 						m_time: (new Date()).getTime(),
 						s_time: post.timestamp
@@ -9490,6 +10217,50 @@ var xch = (function () {
 						);
 					}
 				},
+				mark_post_as_me_ask: function (post, mark, auto) {
+					if (auto) {
+						// Unmark
+						if (mark) {
+							this.mark_post_as_me(post, null, null, true);
+						}
+						else {
+							this.unmark_post_as_me(post, true);
+						}
+						// Message
+						new xch.Message({
+							type: "okay",
+							title: "Post " + (mark ? "Marked" : "Unmarked"),
+							html: (
+								style.e("div")
+								.append(style.t("Post "))
+								.append(
+									style.e("a", "message_link")
+									.text(">>" + (post.id))
+									.attr("href", info.create_url.to_post(post.thread.board, post.thread.id, post.id))
+								)
+								.append(style.t(" has been " + (mark ? "marked" : "unmarked") + " as yours"))
+							)
+						});
+					}
+					else {
+						// Confirm delete
+						if (this.post_marking_popup != null && this.post_marking_popup.open) return;
+
+						this_private.spawn_post_marking_popup.call(this,
+							(mark ? "Mark" : "Unmark") + " Post",
+							"Are you sure you want to " + (mark ? "mark" : "unmark") + " >>" + post.id + " as yours?",
+							(mark ? "Mark" : "Unmark"),
+							function (data) {
+								this.mark_post_as_me_ask(data.post, data.mark, true);
+								return true;
+							},
+							{
+								post: post,
+								mark: mark
+							}
+						);
+					}
+				},
 
 				set_favicon: function (url) {
 					if (this.favicon_node != null) {
@@ -9513,7 +10284,7 @@ var xch = (function () {
 							href = xch.format_string(this.sourcing[i].url, this_private.sourcing_format_function, post);
 							// Add
 							container.append(
-								style.e("a", "post_file_info_extra_link", "post_file_info_extra_link_sourcing")
+								style.e("a", "post_file_info_extra_link post_file_info_extra_link_sourcing")
 								.attr("sourcing_id", i)
 								.attr("target", "_blank")
 								.attr("href", href)
@@ -9564,13 +10335,28 @@ var xch = (function () {
 						}
 					}
 					return null;
+				},
+
+				on_get_posts: function () {
+					var posts = [];
+
+					for (var i = 0, j, t_posts; i < this.threads.length; ++i) {
+						t_posts = this.threads[i].posts;
+						for (j = 0; j < t_posts.length; ++j) {
+							if (t_posts[j].loaded()) {
+								posts.push(t_posts[j]);
+							}
+						}
+					}
+
+					return posts;
 				}
 
 			};
 
 			Content.Context = (function () {
 
-				function Context(settings) {
+				var Context = function (settings) {
 					if (!settings) settings = {};
 
 					this.info = settings.info || null;
@@ -9596,7 +10382,7 @@ var xch = (function () {
 		// Thread and its posts
 		Thread: (function () {
 
-			function Thread() {
+			var Thread = function () {
 				this.id = null;
 				this.posts = [];
 				this.post_map = {};
@@ -9824,7 +10610,7 @@ var xch = (function () {
 							this.container.addClass("expanded");
 
 							// Expand
-							var insert_after = this.container.children(".post.op").first();
+							var insert_after = this.container.children(".post_container.op").first();
 
 							// Get posts
 							var posts = [], max_id = this.post_earliest.id, i, j;
@@ -9869,12 +10655,14 @@ var xch = (function () {
 
 				stylize: function (html) {
 					// New container
-					var c_inner = style.e("div").addClass("thread");
+					var c_inner = style.e("div", "thread");
 
 					// Replace
 					this.container.after(c_inner);
-					c_inner.append(this.container.contents());
-					c_inner.children("input,br.clear,hr,.delete").remove();
+					c_inner
+					.attr("thread_id", this.id)
+					.append(this.container.contents())
+					.children("input,br.clear,hr,.delete").remove();
 					this.container.remove();
 					this.container = c_inner;
 
@@ -9899,23 +10687,14 @@ var xch = (function () {
 		// Post and its contents
 		Post: (function () {
 
-			function Post(thread) {
+			var Post = function (thread) {
 				this.thread = thread;
-
-				this.parsed = false;
-				this.parse_info = null;
 
 				this.id = null;
 				this.t_id = null;
 				this.op = false;
 				this.image = null;
 				this.timestamp = 0;
-				this.subject = null;
-				this.name = null;
-				this.email = null;
-				this.tripcode = null;
-				this.capcode = null;
-				this.comment = null;
 				this.comment_truncated = false;
 				this.deleted = false;
 
@@ -9949,7 +10728,7 @@ var xch = (function () {
 
 
 					// Horizontal position
-					var c_width = container.outerWidth();
+					var c_width = container.width();
 					var w_change = false;
 
 					// Link bounding
@@ -9992,14 +10771,17 @@ var xch = (function () {
 						container.css("top", top + "px");
 					}
 				},
-				update_loader_status: function (container, loader, text) {
+				update_loader_status: function (container, loader, text, progress_selector) {
+					var text_str = "";
+
 					switch (loader.status) {
 						case xch.Loader.status.NOT_RUNNING:
 						{
-							if (text) container.find(".body").text("Loading thread...");
-							container.find(".progress.bar")
+							text_str = "Loading thread...";
+
+							container.find(progress_selector)
 							.removeClass("ajax parse")
-							.find(".inner")
+							.children()
 								.removeClass("parse")
 								.addClass("ajax")
 								.css("width", "0%");
@@ -10007,10 +10789,11 @@ var xch = (function () {
 						break;
 						case xch.Loader.status.AJAX:
 						{
-							if (text) container.find(".body").text("Loading thread...");
-							container.find(".progress.bar")
+							text_str = "Loading thread...";
+
+							container.find(progress_selector)
 							.removeClass("ajax parse")
-							.find(".inner")
+							.children()
 								.removeClass("parse")
 								.addClass("ajax")
 								.css("width", (loader.ajax_progress * 100).toFixed() + "%");
@@ -10018,31 +10801,34 @@ var xch = (function () {
 						break;
 						case xch.Loader.status.ERROR:
 						{
-							if (text) container.find(".body").text("Error loading");
-							container.find(".progress.bar")
+							text_str = "Error loading";
+
+							container.find(progress_selector)
 							.removeClass("ajax parse")
-							.find(".inner")
+							.children()
 								.removeClass("parse ajax")
 								.css("width", "0%");
 						}
 						break;
 						case xch.Loader.status.THREAD_DELETED:
 						{
-							if (text) container.find(".body").text("Thread deleted");
-							container.find(".progress.bar")
+							text_str = "Thread deleted";
+
+							container.find(progress_selector)
 							.removeClass("ajax parse")
-							.find(".inner")
+							.children()
 								.removeClass("parse ajax")
 								.css("width", "0%");
 						}
 						break;
 						case xch.Loader.status.PARSE_WAITING:
 						{
-							if (text) container.find(".body").text("Waiting to parse...");
-							container.find(".progress.bar")
+							text_str = "Waiting to parse...";
+
+							container.find(progress_selector)
 							.removeClass("parse")
 							.addClass("ajax")
-							.find(".inner")
+							.children()
 								.removeClass("ajax")
 								.addClass("parse")
 								.css("width", "0%");
@@ -10050,11 +10836,12 @@ var xch = (function () {
 						break;
 						case xch.Loader.status.PARSING:
 						{
-							if (text) container.find(".body").text("Parsing...");
-							container.find(".progress.bar")
+							text_str = "Parsing...";
+
+							container.find(progress_selector)
 							.removeClass("parse")
 							.addClass("ajax")
-							.find(".inner")
+							.children()
 								.removeClass("ajax")
 								.addClass("parse")
 								.css("width", (loader.parse_progress * 100).toFixed() + "%");
@@ -10062,16 +10849,20 @@ var xch = (function () {
 						break;
 						case xch.Loader.status.COMPLETE:
 						{
-							if (text) container.find(".body").text("Complete");
-							container.find(".progress.bar")
+							text_str = "Complete";
+
+							container.find(progress_selector)
 							.removeClass("ajax")
 							.addClass("parse")
-							.find(".inner")
+							.children()
 								.removeClass("ajax parse")
 								.css("width", "0%");
 						}
 						break;
 					}
+
+					// Set text
+					if (text) container.find(".post_body").text(text_str);
 				},
 				create_inline_instance: function (data, post_target) {
 					// Create and parent
@@ -10109,12 +10900,9 @@ var xch = (function () {
 
 						// Empty parent?
 						if (data.backlink) {
-							if (par.contents().length <= 0) {
+							if (par.contents().length == 0) {
 								par.addClass("empty");
 							}
-						}
-						else {
-							par.remove();
 						}
 
 						// Highlighting
@@ -10129,37 +10917,30 @@ var xch = (function () {
 					}
 					else {
 						// Find container to place
-						var target_container;
-						var in_footer = false;
+						var target_container = null;
 						if (data.backlink) {
 							var par_container = data.instance.container.children(".post");
-							var selector = ".embedded_backlink_container";
+							var selector = ".post_embedded_backlink_container";
 							target_container = par_container.children(".footer:not(.hidden)").children(selector);
 							if (target_container.length == 0) {
 								target_container = par_container.children(selector);
 							}
-							else {
-								in_footer = true;
-							}
-						}
-						else {
-							target_container = style.e("div").addClass("inline container");
-							obj.after(target_container);
 						}
 
-						if (target_container.length > 0) {
+						if (target_container == null || target_container.length > 0) {
 							// Open
 							obj.addClass("open");
 
 							// Move
-							target_container.prepend(container);
+							if (target_container != null) {
+								target_container.prepend(container).removeClass("empty");
+							}
+							else {
+								obj.after(container);
+							}
+
 							container.removeClass("floating");
 							container.css({left:"",top:""});
-
-							// Not empty
-							if (data.backlink) {
-								target_container.removeClass("empty");
-							}
 
 							// Focus
 							if (xch.settings.post.inlining.highlight_on_hover.if_embedded.target) {
@@ -10283,9 +11064,9 @@ var xch = (function () {
 									// Add
 									content.floating_container.append(container);
 									// Set text
-									container.find(".header>.subject").text("Loading Post");
+									container.find(".post_subject").text("Loading Post");
 									// Update status
-									events.update_loader_status.call(this, container, event.data.loader, true);
+									events.update_loader_status.call(this, container, event.data.loader, true, ".post_header_progress");
 									// Position
 									events.position_floating_post.call(this, container, event.data);
 								}
@@ -10410,25 +11191,25 @@ var xch = (function () {
 				reference_loader_progress: function (event, data) {
 					// Progress
 					if (data.temporary != null) {
-						data.temporary.find(".progress.bar>.inner")
+						data.temporary.find(".post_header_progress_inner")
 						.css("width", (event.ratio * 100).toFixed(2) + "%");
 					}
 				},
 				reference_loader_status_change: function (event, data) {
 					// Change status
 					if (data.temporary != null) {
-						events.update_loader_status.call(this, data.temporary, this, true);
+						events.update_loader_status.call(this, data.temporary, this, true, ".post_header_progress");
 					}
 				},
 
 				notification_loader_progress: function (event, data) {
 					// Update percent
-					data.object.find(".progress.bar>.inner")
+					data.object.find(".post_notification_progress_inner")
 					.css("width", (event.ratio * 100).toFixed(2) + "%");
 				},
 				notification_loader_status_change: function (event, data) {
 					// Change status
-					events.update_loader_status.call(this, data.object, this, false);
+					events.update_loader_status.call(this, data.object, this, false, ".post_notification_progress");
 				},
 				notification_loader_complete: function (event, data) {
 					if (!data.complete) {
@@ -10530,7 +11311,7 @@ var xch = (function () {
 				header_number_click: function (event) {
 					if (event.which != 1) return true;
 
-					if ($(this).hasClass("no")) {
+					if ($(this).hasClass("post_no")) {
 						// Post "No."
 						if (info.index) return true;
 
@@ -10559,18 +11340,19 @@ var xch = (function () {
 					if (event.data.instance.settings_menu == null) {
 						// Form options
 						var options = [];
+						var event_data = event.data;
+
 						if (!event.data.post.deleted) {
 							options.push({
 								text: "Report",
-								events: {
-									click: function (event2) {
-										if (event2.which != 1) return true;
+								on: {
+									click: function (event) {
+										if (event.which != 1) return true;
 
-										this.menu.close();
+										event.data.option.menu.close();
 
-										content.report_post(event.data.post, "", false);
+										content.report_post(event_data.post, "", false);
 
-										// TODO
 										return false;
 									}
 								}
@@ -10578,13 +11360,13 @@ var xch = (function () {
 
 							options.push({
 								text: "Delete",
-								events: {
-									click: function (event2) {
-										if (event2.which != 1) return true;
+								on: {
+									click: function (event) {
+										if (event.which != 1) return true;
 
-										this.menu.close();
+										event.data.option.menu.close();
 
-										content.delete_post(event.data.post, false);
+										content.delete_post(event_data.post, false);
 
 										return false;
 									}
@@ -10593,13 +11375,13 @@ var xch = (function () {
 							if (event.data.post.image != null && event.data.post.image.good() && !event.data.post.image.deleted) {
 								options.push({
 									text: "Delete image",
-									events: {
-										click: function (event2) {
-											if (event2.which != 1) return true;
+									on: {
+										click: function (event) {
+											if (event.which != 1) return true;
 
-											this.menu.close();
+											event.data.option.menu.close();
 
-											content.delete_post_image(event.data.post, false);
+											content.delete_post_image(event_data.post, false);
 
 											return false;
 										}
@@ -10610,14 +11392,14 @@ var xch = (function () {
 						if (content.posted_by_me(event.data.post)) {
 							options.push({
 								text: "Unmark as (you)",
-								events: {
-									click: function (event2) {
-										if (event2.which != 1) return true;
+								on: {
+									click: function (event) {
+										if (event.which != 1) return true;
 
-										this.menu.close();
+										event.data.option.menu.close();
 
 										// Unmark
-										content.unmark_post_as_me(event.data.post, true);
+										content.mark_post_as_me_ask(event_data.post, false, false);
 
 										return false;
 									}
@@ -10633,10 +11415,10 @@ var xch = (function () {
 								keep_on_screen: true,
 								fixed_z: null,
 								open: "down",
-								events: {
-									close: function (event2) {
-										// Nullify
-										event.data.instance.settings_menu = null;
+								on: {
+									close: {
+										callback_data: event.data.instance,
+										callback: events.on_settings_menu_close
 									}
 								},
 								options: options
@@ -10648,7 +11430,8 @@ var xch = (function () {
 					}
 				},
 
-				settings_menu_close: function () {
+				on_settings_menu_close: function (event, instance) {
+					instance.settings_menu = null;
 				},
 
 				image_click: function (event) {
@@ -10762,6 +11545,7 @@ var xch = (function () {
 					// Intro
 					var intro = html.find(".intro");
 
+
 					// Find image
 					var img = null, img_data;
 					if (this.op) {
@@ -10789,28 +11573,6 @@ var xch = (function () {
 						this.image.parse((img_data.length > 0 ? $(img_data[0]) : null), img, data.context.info);
 					}
 
-					// Subject
-					var o;
-					if ((o = intro.find(".subject")).length > 0) {
-						this.subject = (o.text() || "").trim();
-					}
-
-					// Name
-					if ((o = intro.find(".name")).length > 0) {
-						this.name = (o.text() || "").trim();
-					}
-					// Email
-					if ((o = intro.find(".email")).length > 0) {
-						this.email = (o.attr("href") || "").substr(7);
-					}
-					// Tripcode
-					if ((o = intro.find(".trip")).length > 0) {
-						this.tripcode = (o.text() || "").trim();
-					}
-					// Tripcode
-					if ((o = intro.find(".capcode")).length > 0) {
-						this.capcode = (o.text() || "").trim().replace(/^\s*#+\s*/, "");
-					}
 
 					// Time
 					if ((o = intro.find("time[datetime]")).length > 0) {
@@ -10827,16 +11589,46 @@ var xch = (function () {
 						}
 					}
 
-					// Comment
-					this.comment = style.e("div").html(html.find(".body").contents());
-					this.comment_truncated = (this.comment.find(".toolong").length > 0);
 
-					// Done
-					this.parsed = true;
+					// Stylizing data
+					var stylize_data = {
+						subject: null,
+						name: null,
+						email: null,
+						tripcode: null,
+						capcode: null,
+						comment: null
+					};
+
+					// Subject
+					var o;
+					if ((o = intro.find(".subject")).length > 0) {
+						stylize_data.subject = (o.text() || "").trim();
+					}
+					// Name
+					if ((o = intro.find(".name")).length > 0) {
+						stylize_data.name = (o.text() || "").trim();
+					}
+					// Email
+					if ((o = intro.find(".email")).length > 0) {
+						stylize_data.email = (o.attr("href") || "").substr(7);
+					}
+					// Tripcode
+					if ((o = intro.find(".trip")).length > 0) {
+						stylize_data.tripcode = (o.text() || "").trim();
+					}
+					// Tripcode
+					if ((o = intro.find(".capcode")).length > 0) {
+						stylize_data.capcode = (o.text() || "").trim().replace(/^\s*#+\s*/, "");
+					}
+
+					// Comment
+					stylize_data.comment = style.set_class(html.find(".body"));
+					this.comment_truncated = (stylize_data.comment.find(".toolong").length > 0);
 
 					// Stylize
 					if (data.context.stylize) {
-						this_private.stylize.call(this, this.instances[0], (data.context.html_target == null));
+						this_private.stylize.call(this, this.instances[0], (data.context.html_target == null), stylize_data);
 						this.prepare(this.instances[0]);
 					}
 
@@ -10858,7 +11650,7 @@ var xch = (function () {
 					// Update comment (if truncated)
 					if (this.comment_truncated && html.find(".body").find(".toolong").length == 0) {
 						// Get the remaining comment
-						var com = style.e("div").addClass("body_full").html(html.find(".body").contents()), new_com;
+						var com = style.set_class(html.find(".body"), "post_body_full"), new_com;
 						this_private.stylize_comment.call(this, com);
 						// Insert
 						for (var i = 0, j = this.instances.length; i < j; ++i) {
@@ -10866,7 +11658,7 @@ var xch = (function () {
 							new_com = (i == 0 ? com : com.clone());
 							this.prepare_comment(this.instances[i], new_com);
 							// Append
-							this.instances[i].container.children(".post").children(".body").after(new_com);
+							this.instances[i].container.children(".post").children(".post_body").after(new_com);
 						}
 
 						// Not truncated
@@ -10920,69 +11712,69 @@ var xch = (function () {
 					this.thread.post_loaded(this, data.context, data.thread_context, data.post_context, changed, update_data);
 				},
 
-				stylize: function (instance, replace_old_style) {
+				stylize: function (instance, replace_old_style, stylize_data) {
 					// New container
 					var outer = style.e("div", "post_container " + (this.op ? "op" : "reply"));
 					var inner = style.e("div", "post");
 					outer.attr("post_id", this.id);
 
 					//{ Header
-						var header = style.e("div").addClass("header")
+						var header = style.e("div", "post_header")
 
 						// Subject
-						if (this.subject !== null) {
-							var subject_container = style.e("span").addClass("subject").text(this.subject);
+						if (stylize_data.subject !== null) {
+							var subject_container = style.e("span", "post_subject").text(stylize_data.subject);
 							header.append(subject_container);
 						}
 
 						// Name
 						var has_name = false;
-						var name_container = style.e("a").addClass("identity");
-						if (this.name !== null) {
+						var name_container = style.e("a", "post_identity");
+						if (stylize_data.name !== null) {
 							name_container.append(
-								style.e("span").addClass("name").text(this.name)
+								style.e("span", "post_identity_name").text(stylize_data.name)
 							);
 							has_name = true;
 						}
-						if (this.tripcode !== null) {
+						if (stylize_data.tripcode !== null) {
 							name_container.append(
-								style.e("span").addClass("tripcode").text(this.tripcode)
+								style.e("span", "post_identity_tripcode").text(stylize_data.tripcode)
 							);
 							has_name = true;
 						}
-						if (this.capcode !== null) {
+						if (stylize_data.capcode !== null) {
 							name_container.append(
-								style.e("span").addClass("capcode indicator").text(style.post.header.identity.capcode.indicator)
+								style.e("span", "post_identity_capcode_indicator").text(style.post.header.identity.capcode.indicator)
 							)
 							.append(
-								style.e("span").addClass("capcode").text(this.capcode)
+								style.e("span", "post_identity_capcode").text(stylize_data.capcode)
 							);
 
-							var cc = this.capcode.toLowerCase();
-							if (cc.indexOf("admin") >= 0) outer.addClass("admin");
-							else if (cc.indexOf("mod") >= 0) outer.addClass("mod");
+							var cc = stylize_data.capcode.toLowerCase();
+							if (cc.indexOf("admin") >= 0) name_container.addClass("admin");
+							else if (cc.indexOf("mod") >= 0) name_container.addClass("mod");
 
 							has_name = true;
 						}
 						if (has_name) {
-							if (this.email !== null) {
-								name_container.attr("href", "mailto:" + this.email);
+							if (stylize_data.email !== null) {
+								name_container.attr("href", "mailto:" + stylize_data.email);
 							}
 							header.append(name_container);
 						}
 
 						// More header stuff
 						header.append(
-							style.e("span").addClass("time")
+							style.e("span", "post_time")
 							.text(xch.date.format(this.timestamp + xch.settings.post.time.offset, xch.settings.post.time.format))
 						)
 						.append(
-							style.e("a").addClass("no")
+							style.e("a", "post_no")
 							.attr("href", info.create_url.to_post(this.thread.board, this.thread.id, this.id))
 							.text(style.post.header.number.indicator)
 						)
 						.append(
-							style.e("a").addClass("number")
+							style.e("a", "post_number no_spacing")
 							.attr("href", info.create_url.to_post(this.thread.board, this.thread.id, this.id))
 							.text(this.id)
 						);
@@ -10992,7 +11784,7 @@ var xch = (function () {
 							// Sticky
 							if (this.thread.sticky) {
 								header.append(
-									style.e("span").addClass("sticky icon")
+									style.e("span", "post_icon sticky")
 									.attr("title", "Sticky")
 								);
 							}
@@ -11000,7 +11792,7 @@ var xch = (function () {
 							// Locked
 							if (this.thread.locked) {
 								header.append(
-									style.e("span").addClass("locked icon")
+									style.e("span", "post_icon locked")
 									.attr("title", "Locked")
 								);
 							}
@@ -11008,10 +11800,9 @@ var xch = (function () {
 							// Reply
 							if (info.index) {
 								header.append(
-									style.e("span").addClass("option reply_to no_inline")
+									style.e("span", "post_option reply_to no_inline")
 									.append(
-										style.e("a")
-										.addClass("message")
+										style.e("a", "post_option_text")
 										.attr("href", info.create_url.to_thread(this.thread.board, this.thread.id))
 									)
 								);
@@ -11020,12 +11811,12 @@ var xch = (function () {
 
 						// Backlinks
 						header.append(
-							style.e("span").addClass("backlinks empty")
+							style.e("span", "post_backlinks empty")
 						);
 
 						// Options
 						header.append(
-							style.e("span").addClass("settings")
+							style.e("span", "post_settings")
 						);
 
 					//}
@@ -11034,18 +11825,15 @@ var xch = (function () {
 					var file_info = null, file_image = null, file_extras = null;
 					if (this.image != null) {
 						if (!this.image.deleted) {
-							file_info = style.e("div")
-							.addClass("file_info")
+							file_info = style.e("div", "post_file_info")
 							.append(
-								style.e("a")
-								.addClass("file")
+								style.e("a", "post_file_info_file")
 								.text(this.image.filename_original)
 								.attr("href", this.image.url)
 								.attr("target", "_blank")
 							)
 							.append(
-								style.e("span")
-								.addClass("attributes")
+								style.e("span", "post_file_info_attributes")
 								.append(
 									style.e("span")
 									.text(this.image.filesize_label[0] + " " + this.image.filesize_label[1] + ", " + this.image.width + style.symbols.mult + this.image.height)
@@ -11057,13 +11845,12 @@ var xch = (function () {
 						}
 
 						var img;
-						file_image = style.e("div").addClass("image container").append(
-							style.e("a").addClass("image link")
+						file_image = style.e("div", "post_image_container").append(
+							style.e("a", "post_image_link")
 							.attr("href", this.image.url)
 							.attr("target", "_blank")
 							.append(
-								(img = style.e("img"))
-								.addClass("image")
+								(img = style.e("img", "post_image"))
 								.attr("src", this.image.thumbnail)
 								.attr("title", "")
 								.attr("alt", "")
@@ -11072,28 +11859,26 @@ var xch = (function () {
 						this.image.stylize_size(img, this.op);
 					}
 
-					// Replace toolong
-					this.comment.find(".toolong").remove();
-
 					// Comment
-					this.comment.addClass("body");
-					this_private.stylize_comment.call(this, this.comment);
+					stylize_data.comment.find(".toolong").remove();
+					stylize_data.comment.addClass("post_body");
+					this_private.stylize_comment.call(this, stylize_data.comment);
 
 					// Notifications
-					var notifications = style.e("div").addClass("notifications empty");
+					var notifications = style.e("div", "post_notifications empty");
 					if (this.op && (this.thread.posts_omitted > 0 || this.thread.images_omitted > 0)) {
 						notifications.removeClass("empty").append(
-							style.e("div").addClass("notification omitted")
+							style.e("div", "post_notification omitted")
 							.append(
-								style.e("a").addClass("message")
+								style.e("a", "post_notification_message")
 								.attr("href", info.create_url.to_thread(this.thread.board, this.thread.id))
 								.append(
-									style.e("div").addClass("progress bar").html(
-										style.e("div").addClass("inner")
+									style.e("div", "post_notification_progress").html(
+										style.e("div", "post_notification_progress_inner")
 									)
 								)
 								.append(
-									style.e("span").html(
+									style.e("span", "post_notification_text").html(
 										this.thread.posts_omitted + " repl" + (this.thread.posts_omitted == 1 ? "y" : "ies") + (this.thread.images_omitted > 0 ? (" and " + this.thread.images_omitted + " image" + (this.thread.images_omitted == 1 ? "" : "s")) : "") + " omitted"
 									)
 								)
@@ -11102,30 +11887,30 @@ var xch = (function () {
 					}
 					if (this.comment_truncated) {
 						notifications.removeClass("empty").append(
-							style.e("div").addClass("notification truncated")
+							style.e("div", "post_notification truncated")
 							.append(
-								style.e("a").addClass("message")
+								style.e("a", "post_notification_message")
 								.attr("href", info.create_url.to_post(this.thread.board, this.thread.id, this.id))
 								.append(
-									style.e("div").addClass("progress bar").html(
-										style.e("div").addClass("inner")
+									style.e("div", "post_notification_progress").html(
+										style.e("div", "post_notification_progress_inner")
 									)
 								)
-								.append(style.e("span"))
+								.append(style.e("span", "post_notification_text"))
 							)
 						);
 					}
 
 					// Top backlinks
-					var top_backlink_container = style.e("div").addClass("embedded_backlink_container empty");
+					var top_backlink_container = style.e("div", "post_embedded_backlink_container empty");
 
 					// Footer
-					var footer = style.e("div").addClass("footer hidden empty");
+					var footer = style.e("div", "post_footer hidden empty");
 					footer.append(
-						style.e("span").addClass("backlinks")
+						style.e("span", "post_backlinks")
 					)
 					.append(
-						style.e("div").addClass("embedded_backlink_container empty")
+						style.e("div", "post_embedded_backlink_container empty")
 					);
 					if (xch.settings.post.footer_backlinks) {
 						footer.removeClass("hidden");
@@ -11146,8 +11931,8 @@ var xch = (function () {
 						inner.append(header).append(top_backlink_container);
 					}
 					inner
-					.append(this.comment)
-					.append(style.e("div").addClass("body_after"))
+					.append(stylize_data.comment)
+					.append(style.e("div", "post_body_after"))
 					.append(notifications)
 					.append(footer);
 					outer.append(inner);
@@ -11184,7 +11969,8 @@ var xch = (function () {
 					// Greentext
 					comment.find(".quote").each(function () {
 						// Dead links
-						var c = $(this).contents();
+						var obj = $(this);
+						var c = obj.contents();
 						if (c.length == 1) {
 							c = /^>>(?:>\/(\w+)\/)?([0-9]+)$/i.exec(c.text());
 							if (c) {
@@ -11197,9 +11983,8 @@ var xch = (function () {
 								var rr, ref = self.add_reference(board, thread_id, post_id);
 
 								// Make a resurrected quote
-								$(this).after(
-									(rr = style.e("a"))
-									.addClass("resurrected reference")
+								obj.after(
+									(rr = style.e("a", "post_reference resurrected"))
 									.attr("board", board)
 									.attr("post", post_id)
 									.attr("href", info.create_url.to_post(board, self.thread.id, post_id))
@@ -11207,31 +11992,30 @@ var xch = (function () {
 								style.format_reference_style(rr, ref);
 
 								// Remove dead
-								$(this).remove();
+								obj.remove();
 								return;
 							}
 						}
 
 						// Add class
-						$(this).addClass(style.cls);
+						style.set_class(obj, "quote");
 					});
 
 					// Spoilers
-					comment.find(".spoiler").addClass(style.cls);
+					style.set_class(comment.find(".spoiler"), "spoiler");
 
 					// Links
 					var re = /\/\/boards\.38chan\.net\/(\w+)\/res\/([0-9]+)\.html#([0-9]+)/i;
 					comment.find("a").each(function () {
-						var m = re.exec($(this).attr("href") || "");
+						var obj = $(this);
+						var m = re.exec(obj.attr("href") || "");
 						if (m) {
 							// Reference
 							var board = m[1];
 							var thread_id = parseInt(m[2]);
 							var post_id = parseInt(m[3]);
 							// Update element
-							$(this)
-							.addClass(style.cls)
-							.addClass("reference")
+							style.set_class(obj, "post_reference")
 							.removeAttr("onclick")
 							.off("click")
 							.attr("board", board)
@@ -11243,6 +12027,9 @@ var xch = (function () {
 							// Re-format
 							style.format_reference_style($(this), ref);
 						}
+						else {
+							obj.addClass("post_link");
+						}
 					});
 				},
 				stylize_reference: function (ref) {
@@ -11253,13 +12040,12 @@ var xch = (function () {
 							var c = ref.target.instances[i].container.children(".post");
 
 							// Add backlink
-							var selector = ".backlinks";
-							var footer = c.children(".footer:not(.hidden)");
-							var backlink_container = (footer.length > 0 ? footer : c.children(".header")).find(selector);
+							var selector = ".post_backlinks";
+							var footer = c.children(".post_footer:not(.hidden)");
+							var backlink_container = (footer.length > 0 ? footer : c.children(".post_header")).find(selector);
 							var backlink;
 							// Backlink
-							(backlink = style.e("a"))
-							.addClass("backlink")
+							(backlink = style.e("a", "post_backlink"))
 							.attr("board", ref.origin.thread.board)
 							.attr("thread", ref.origin.thread.id)
 							.attr("post", ref.origin.id)
@@ -11316,7 +12102,7 @@ var xch = (function () {
 				},
 				update_reference: function (ref, update_function, update_function_data) {
 					// Selector
-					var selector = ".reference";
+					var selector = ".post_reference";
 					if (ref.target_board !== null) selector += '[board="' + ref.target_board + '"]';
 					if (ref.target_thread_id !== null) selector += '[thread="' + ref.target_thread_id + '"]';
 					if (ref.target_post_id !== null) selector += '[post="' + ref.target_post_id + '"]';
@@ -11327,12 +12113,12 @@ var xch = (function () {
 					// Fix origin
 					for (var i = 0, j = ref.origin.instances.length; i < j; ++i) {
 						// Find post comment
-						var c = ref.origin.instances[i].container.children(".post").children(".body");
+						var c = ref.origin.instances[i].container.children(".post").children(".post_body");
 						// Check each
 						c.find(selector).each(function () {
 							// Must have correct parent
 							var obj = $(this);
-							if (obj.parents(".body")[0] == c[0]) {
+							if (obj.parents(".post_body")[0] == c[0]) {
 								// Fix reference
 								ref.origin.update_reference_html(ref, obj, ref.origin.instances[i]);
 							}
@@ -11341,182 +12127,6 @@ var xch = (function () {
 				},
 				update_reference_style: function (ref) {
 					this_private.stylize_reference.call(this, ref);
-				},
-				update_backlink: function (ref, update_function, update_function_data) {
-					// Selector
-					var selector = ".backlink";
-					selector += '[board="' + ref.origin.thread.board + '"]';
-					selector += '[thread="' + ref.origin.thread.id + '"]';
-					selector += '[post="' + ref.origin.id + '"]';
-
-					// Update
-					if (update_function) update_function.call(this, ref, update_function_data, this);
-					if (ref.target == null) return;
-
-					// Fix origin
-					for (var i = 0, j = ref.target.instances.length; i < j; ++i) {
-						// Find post
-						var c = ref.target.instances[i].container.children(".post");
-
-						// Add backlink
-						var header = c.children(".header");
-						var footer = c.children(".footer");
-						var bl_selector = ".backlinks";
-						var backlink_container = header.find(bl_selector).add(footer.find(bl_selector));
-
-						// Check each
-						backlink_container.find(selector).each(function () {
-							// Check
-							var obj = $(this);
-							obj
-							.attr("board", ref.origin.thread.board)
-							.attr("thread", ref.origin.thread.id)
-							.attr("post", ref.origin.id)
-							.attr("href", info.create_url.to_post(ref.origin.thread.board, ref.origin.thread.id, ref.origin.id));
-							style.format_backlink_style(obj, ref);
-						});
-					}
-				},
-
-				get_reference: function (board, thread_id, post_id) {
-					for (var i = 0, ref; i < this.references.length; ++i) {
-						ref = this.references[i];
-						if (ref.target_board == board && ref.target_thread_id === thread_id && ref.target_post_id == post_id) return ref;
-					}
-					return null;
-				},
-				get_backlink: function (board, thread_id, post_id) {
-					for (var i = 0, post; i < this.replies.length; ++i) {
-						post = this.replies[i].origin;
-						if (post.thread.board == board && post.thread.id === thread_id && post.id == post_id) return this.replies[i];
-					}
-					return null;
-				},
-
-				prepare: function (instance) {
-					var self = this, obj, data;
-
-					// Comment
-					this.prepare_comment(instance, null);
-					var p_container = instance.container.children(".post");
-					// Backlinks
-					instance.container.find(".backlinks>.backlink").each(function () {
-						// Prepare
-						self.prepare_backlink($(this), instance);
-					});
-
-					if (this.image != null) {
-						// Data
-						obj = instance.container.find(".image.container>.image.link");
-						data = {
-							post: this,
-							instance: instance,
-							image: this.image,
-							preview: null,
-							object: obj,
-							close_timer: null,
-							zoom: 1,
-							mouse_last: {x:0,y:0},
-							bounding: null,
-							open_timer: null
-						};
-
-						// Image
-						instance.bind_html_event(
-							obj,
-							"click", data, events.image_click, false
-						);
-						instance.bind_html_event(
-							obj,
-							"mouseenter", data, events.image_mouseenter, false
-						);
-						instance.bind_html_event(
-							obj,
-							"mouseleave", data, events.image_mouseleave, false
-						);
-						$(window)
-						.on("scroll", data, events.image_window_scroll)
-						.on("resize", data, events.image_window_resize);
-
-						// Sourcing
-						var ex = p_container.children(".file_info").children(".post_file_info_extra_links");
-						if (ex.length > 0) {
-							content.prepare_sourcing_info(ex, this, instance);
-						}
-					}
-
-					// Data
-					data = { post: this, instance: instance };
-
-					// Header
-					instance.bind_html_event(
-						instance.container.find(".header>.identity"),
-						"click", data, events.header_identity_click, false
-					);
-					instance.bind_html_event(
-						instance.container.find(".header>.no,.header>.number"),
-						"click", data, events.header_number_click, false
-					);
-					instance.bind_html_event(
-						instance.container.find(".header>.settings"),
-						"click", data, events.header_settings_click, false
-					);
-
-					// Notifications
-					obj = instance.container.find(".notification.truncated>.message");
-					if (obj.length > 0) {
-						(function (obj, instance) {
-							var data = { post: this, instance: instance, loader: null, object: obj };
-							data.loader = xch.Loader.get_thread(
-								this.thread.board,
-								this.thread.id,
-								null,
-								{
-									progress: function (event) { return events.notification_loader_progress.call(this, event, data); },
-									post_load: function (event) { return events.notification_loader_post_load.call(this, event, data); },
-									status_change: function (event) { return events.notification_loader_status_change.call(this, event, data); }
-								}
-							);
-							instance.bind_html_event(
-								obj,
-								"click", data, events.notification_truncated_message_click, false
-							);
-						}).call(this, obj, instance);
-					}
-					obj = instance.container.find(".notification.omitted>.message");
-					if (obj.length > 0) {
-						(function (obj, instance) {
-							var data = { post: this, instance: instance, loader: null, object: obj };
-							data.loader = xch.Loader.get_thread(
-								this.thread.board,
-								this.thread.id,
-								null,
-								{
-									progress: function (event) { return events.notification_loader_progress.call(this, event, data); },
-									complete: function (event) { return events.notification_loader_complete.call(this, event, data); },
-									status_change: function (event) { return events.notification_loader_status_change.call(this, event, data); }
-								}
-							);
-							instance.bind_html_event(
-								obj,
-								"click", data, events.notification_omitted_posts_click, false
-							);
-						}).call(this, obj, instance);
-					}
-				},
-				prepare_comment: function (instance, html) {
-					var self = this;
-
-					// Find html
-					if (html == null) {
-						html = instance.container.children(".post").children(".body,.body_truncated");
-					}
-
-					// Reference links
-					html.find(".reference").each(function () {
-						// Prepare
-						self.prepare_reference($(this), instance);
-					});
 				},
 				update_reference_html: function (ref, obj, instance) {
 					// Change attributes
@@ -11554,6 +12164,185 @@ var xch = (function () {
 
 					// Prepare
 					if (instance) this.prepare_reference(obj, instance);
+				},
+				update_backlink: function (ref, update_function, update_function_data) {
+					// Selector
+					var selector = ".post_backlink";
+					selector += '[board="' + ref.origin.thread.board + '"]';
+					selector += '[thread="' + ref.origin.thread.id + '"]';
+					selector += '[post="' + ref.origin.id + '"]';
+
+					// Update
+					if (update_function) update_function.call(this, ref, update_function_data, this);
+					if (ref.target == null) return;
+
+					// Fix origin
+					for (var i = 0, j = ref.target.instances.length; i < j; ++i) {
+						// Find post
+						var c = ref.target.instances[i].container.children(".post");
+
+						// Add backlink
+						var footer = c.children(".post_footer:not(.hidden)");
+						var header = c.children(".post_header");
+						var backlink_container = header.add(footer).find(".post_backlinks");
+
+						// Check each
+						backlink_container.find(selector).each(function () {
+							// Check
+							var obj = $(this);
+							obj
+							.attr("board", ref.origin.thread.board)
+							.attr("thread", ref.origin.thread.id)
+							.attr("post", ref.origin.id)
+							.attr("href", info.create_url.to_post(ref.origin.thread.board, ref.origin.thread.id, ref.origin.id));
+							style.format_backlink_style(obj, ref);
+						});
+					}
+				},
+
+				get_reference: function (board, thread_id, post_id) {
+					for (var i = 0, ref; i < this.references.length; ++i) {
+						ref = this.references[i];
+						if (ref.target_board == board && ref.target_thread_id === thread_id && ref.target_post_id == post_id) return ref;
+					}
+					return null;
+				},
+				get_backlink: function (board, thread_id, post_id) {
+					for (var i = 0, post; i < this.replies.length; ++i) {
+						post = this.replies[i].origin;
+						if (post.thread.board == board && post.thread.id === thread_id && post.id == post_id) return this.replies[i];
+					}
+					return null;
+				},
+
+				prepare: function (instance) {
+					var self = this, obj, data;
+
+					// Comment
+					this.prepare_comment(instance, null);
+					var p_container = instance.container.children(".post");
+					// Backlinks
+					instance.container.find(".post_backlink").each(function () {
+						// Prepare
+						self.prepare_backlink($(this), instance);
+					});
+
+					if (this.image != null) {
+						// Data
+						obj = instance.container.find(".post_image_link");
+						data = {
+							post: this,
+							instance: instance,
+							image: this.image,
+							preview: null,
+							object: obj,
+							close_timer: null,
+							zoom: 1,
+							mouse_last: {x:0,y:0},
+							bounding: null,
+							open_timer: null
+						};
+
+						// Image
+						instance.bind_html_event(
+							obj,
+							"click", data, events.image_click, false
+						);
+						instance.bind_html_event(
+							obj,
+							"mouseenter", data, events.image_mouseenter, false
+						);
+						instance.bind_html_event(
+							obj,
+							"mouseleave", data, events.image_mouseleave, false
+						);
+						$(window)
+						.on("scroll", data, events.image_window_scroll)
+						.on("resize", data, events.image_window_resize);
+
+						// Sourcing
+						var ex = p_container.children(".post_file_info").children(".post_file_info_extra_links");
+						if (ex.length > 0) {
+							content.prepare_sourcing_info(ex, this, instance);
+						}
+					}
+
+					// Data
+					data = { post: this, instance: instance };
+
+					// Header
+					instance.bind_html_event(
+						instance.container.find(".post_identity"),
+						"click", data, events.header_identity_click, false
+					);
+					instance.bind_html_event(
+						instance.container.find(".post_no,.post_number"),
+						"click", data, events.header_number_click, false
+					);
+					instance.bind_html_event(
+						instance.container.find(".post_settings"),
+						"click", data, events.header_settings_click, false
+					);
+
+					// Notifications
+					obj = instance.container.find(".post_notification.truncated>.post_notification_message");
+					if (obj.length > 0) {
+						(function (obj, instance) {
+							var data = { post: this, instance: instance, loader: null, object: obj };
+							data.loader = xch.Loader.get_thread(
+								this.thread.board,
+								this.thread.id,
+								null,
+								{
+									progress: function (event) { return events.notification_loader_progress.call(this, event, data); },
+									post_load: function (event) { return events.notification_loader_post_load.call(this, event, data); },
+									status_change: function (event) { return events.notification_loader_status_change.call(this, event, data); }
+								}
+							);
+							instance.bind_html_event(
+								obj,
+								"click", data, events.notification_truncated_message_click, false
+							);
+						}).call(this, obj, instance);
+					}
+					obj = instance.container.find(".post_notification.omitted>.post_notification_message");
+					if (obj.length > 0) {
+						(function (obj, instance) {
+							var data = { post: this, instance: instance, loader: null, object: obj };
+							data.loader = xch.Loader.get_thread(
+								this.thread.board,
+								this.thread.id,
+								null,
+								{
+									progress: function (event) { return events.notification_loader_progress.call(this, event, data); },
+									complete: function (event) { return events.notification_loader_complete.call(this, event, data); },
+									status_change: function (event) { return events.notification_loader_status_change.call(this, event, data); }
+								}
+							);
+							instance.bind_html_event(
+								obj,
+								"click", data, events.notification_omitted_posts_click, false
+							);
+						}).call(this, obj, instance);
+					}
+
+					// Trigger prepare
+					api.signal("post_prepare", {
+						post: this,
+						post_instance: instance
+					});
+				},
+				prepare_comment: function (instance, html) {
+					// Find html
+					if (html == null) {
+						html = instance.container.children(".post").children(".post_body,.post_body_full");
+					}
+
+					// Reference links
+					var refs = html.find(".post_reference");
+					for (var i = 0; i < refs.length; ++i) {
+						this.prepare_reference($(refs[i]), instance);
+					}
 				},
 				prepare_reference: function (obj, instance) {
 					// Data
@@ -11594,10 +12383,10 @@ var xch = (function () {
 						}
 
 						// Events
-						instance.unbind_html_event(obj, "mouseenter", true);
-						instance.unbind_html_event(obj, "mouseleave", true);
-						instance.unbind_html_event(obj, "mousemove", true);
-						instance.unbind_html_event(obj, "click", true);
+						instance.unbind_html_event(obj, "mouseenter");
+						instance.unbind_html_event(obj, "mouseleave");
+						instance.unbind_html_event(obj, "mousemove");
+						instance.unbind_html_event(obj, "click");
 						instance.bind_html_event(obj, "mouseenter", data, events.reference_mouseenter, true);
 						instance.bind_html_event(obj, "mouseleave", data, events.reference_mouseleave, true);
 						instance.bind_html_event(obj, "mousemove", data, events.reference_mousemove, true);
@@ -11630,15 +12419,30 @@ var xch = (function () {
 						/*!debug!*/assert(data.ref !== null, "Bad backlink to " + b + "/" + t + "/" + p);
 
 						// Events
-						instance.unbind_html_event(obj, "mouseenter", true);
-						instance.unbind_html_event(obj, "mouseleave", true);
-						instance.unbind_html_event(obj, "mousemove", true);
-						instance.unbind_html_event(obj, "click", true);
+						instance.unbind_html_event(obj, "mouseenter");
+						instance.unbind_html_event(obj, "mouseleave");
+						instance.unbind_html_event(obj, "mousemove");
+						instance.unbind_html_event(obj, "click");
 						instance.bind_html_event(obj, "mouseenter", data, events.reference_mouseenter, true);
 						instance.bind_html_event(obj, "mouseleave", data, events.reference_mouseleave, true);
 						instance.bind_html_event(obj, "mousemove", data, events.reference_mousemove, true);
 						instance.bind_html_event(obj, "click", data, events.reference_click, true);
 					}
+				},
+				unprepare: function (instance) {
+					// Unbind events
+					instance.unbind_html_events();
+
+					// Close settings menu
+					if (instance.settings_menu != null) {
+						instance.settings_menu.close();
+					}
+
+					// Trigger prepare
+					api.signal("post_unprepare", {
+						post: this,
+						post_instance: instance
+					});
 				},
 
 				mark_as_dead_image: function (no_event) {
@@ -11658,14 +12462,14 @@ var xch = (function () {
 					j = this.instances.length;
 					for (i = 0; i < j; ++i) {
 						// Find post comment
-						c = this.instances[i].container.children(".post").children(".header");
-						d = c.find(".deleted_image,.deleted_post");
+						c = this.instances[i].container.children(".post").children(".post_header");
+						d = c.find(".post_indicator_deleted_image,.post_indicator_deleted_post");
 						if (d.length > 0) {
-							d.removeClass("deleted_post").addClass("deleted_image");
+							d.removeClass("post_indicator_deleted_post").addClass("post_indicator_deleted_image");
 						}
 						else {
 							c.prepend(
-								style.e("span").addClass("deleted_image")
+								style.e("span", "post_indicator_deleted_image")
 							);
 						}
 					}
@@ -11704,14 +12508,14 @@ var xch = (function () {
 					j = this.instances.length
 					for (i = 0; i < j; ++i) {
 						// Find post comment
-						c = this.instances[i].container.children(".post").children(".header");
-						d = c.find(".deleted_image,.deleted_post");
+						c = this.instances[i].container.children(".post").children(".post_header");
+						d = c.find(".post_indicator_deleted_image,.post_indicator_deleted_post");
 						if (d.length > 0) {
-							d.removeClass("deleted_image").addClass("deleted_post");
+							d.removeClass("post_indicator_deleted_image").addClass("post_indicator_deleted_post");
 						}
 						else {
 							c.prepend(
-								style.e("span").addClass("deleted_post")
+								style.e("span", "post_indicator_deleted_post")
 							);
 						}
 					}
@@ -11748,13 +12552,12 @@ var xch = (function () {
 					// De-op
 					if (!c.hasClass("reply")) {
 						// Add reply class
-						var inner =
-						c.add(inner).addClass("reply").removeClass("op");
+						c.addClass("reply").removeClass("op");
 
 						// Shift around stuff
-						var h = inner.children(".header");
-						var blc = inner.children(".embedded_backlink_container");
-						var ref_container = inner.children(".file_info,.image.container");
+						var h = inner.children(".post_header");
+						var blc = inner.children(".post_embedded_backlink_container");
+						var ref_container = inner.children(".post_file_info,.post_image_container");
 						if (ref_container.length > 0) {
 							ref_container = ref_container.first();
 							ref_container.before(h);
@@ -11777,24 +12580,24 @@ var xch = (function () {
 					return instance;
 				},
 				create_inline_message: function () {
-					var e = style.e("div").addClass("inline post_container reply message");
+					var e = style.e("div", "post_container reply inline");
 
 					e.append(
-						style.e("div").addClass("post message")
+						style.e("div", "post")
 						.append(
-							style.e("div").addClass("header")
+							style.e("div", "post_header")
 							.append(
-								style.e("span").addClass("subject")
+								style.e("span", "post_subject")
 							)
 							.append(
-								style.e("div").addClass("progress bar")
+								style.e("div", "post_header_progress no_spacing")
 								.append(
-									style.e("div").addClass("inner")
+									style.e("div", "post_header_progress_inner")
 								)
 							)
 						)
 						.append(
-							style.e("div").addClass("body")
+							style.e("div", "post_body")
 						)
 					);
 
@@ -11802,34 +12605,34 @@ var xch = (function () {
 				},
 
 				get_name_plaintext: function () {
-					var s = this.instances[0].container.children(".post").children(".header");
-					var name = s.children(".identity").children(".name");
+					var s = this.instances[0].container.children(".post").children(".post_header");
+					var name = s.children(".post_identity").children(".post_identity_name");
 
 					if (name.length == 0) return null;
 					return xch.dom_to_string(name);
 				},
 				get_tripcode_plaintext: function () {
-					var s = this.instances[0].container.children(".post").children(".header");
-					var tripcode = s.children(".identity").children(".tripcode");
+					var s = this.instances[0].container.children(".post").children(".post_header");
+					var tripcode = s.children(".post_identity").children(".post_identity_tripcode");
 
 					if (tripcode.length == 0) return null;
 					return xch.dom_to_string(tripcode);
 				},
 				get_subject_plaintext: function () {
-					var s = this.instances[0].container.children(".post").children(".header");
-					var subject = s.children(".subject");
+					var s = this.instances[0].container.children(".post").children(".post_header");
+					var subject = s.children(".post_subject");
 
 					if (subject.length == 0) return null;
 					return xch.dom_to_string(subject);
 				},
 				get_comment_plaintext: function () {
 					var b = this.instances[0].container.children(".post");
-					var body = b.children(".body_full");
-					if (body.length == 0) body = b.children(".body");
+					var body = b.children(".post_body_full");
+					if (body.length == 0) body = b.children(".post_body");
 
 					if (body.length == 0) return null;
 					return xch.dom_to_string(body, function (obj, parent) {
-						return (!obj.hasClass("inline container"));
+						return (!obj.hasClass("inline post_container"));
 					});
 				},
 
@@ -11870,7 +12673,7 @@ var xch = (function () {
 				set_image_embedded: function (embedded, instance, obj) {
 					if (this.image != null && this.image.url !== null) {
 						if (!obj) {
-							obj = instance.container.children(".post").children(".image.container");
+							obj = instance.container.children(".post").children(".post_image_container");
 						}
 						if (obj.length > 0) {
 							if (embedded) {
@@ -11879,10 +12682,10 @@ var xch = (function () {
 									obj.addClass("embed");
 									// Add
 									var img;
-									var link = obj.children(".image.link");
+									var link = obj.children(".post_image_link");
 									if (!this.image.spoiler && this.image.extension != ".gif") {
 										link.append(
-											style.e("div").addClass("thumbnail")
+											style.e("div", "post_image_thumbnail")
 											.css({
 												"background-image": 'url("' + style.escape_string(this.image.thumbnail) + '")',
 												"background-size": this.image.width + "px " + this.image.height + "px"
@@ -11890,8 +12693,7 @@ var xch = (function () {
 										);
 									}
 									link.append(
-										(img = style.e("img"))
-										.addClass("image full")
+										(img = style.e("img", "post_image full"))
 										.attr("title", "")
 										.attr("alt", "")
 										.on("load", function (event) {
@@ -11910,9 +12712,9 @@ var xch = (function () {
 									// Un-embed
 									obj.removeClass("embed loaded");
 									// Remove
-									var link = obj.children(".image.link");
-									link.children("img.image.full").off("load").remove();
-									link.children(".thumbnail").remove();
+									var link = obj.children(".post_image_link");
+									link.children(".post_image.full").off("load").remove();
+									link.children(".post_image_thumbnail").remove();
 								}
 							}
 						}
@@ -11934,20 +12736,19 @@ var xch = (function () {
 			Post.get_html_references = function (container, additional_selector) {
 				return container
 					.children(".post")
-					.children(".body")
-					.find(".reference" + (additional_selector || ""));
+					.children(".post_body")
+					.find(".post_reference" + (additional_selector || ""));
 			};
 			Post.get_html_backlinks = function (container, additional_selector) {
-				var sel = ".backlinks";
 				var con = container.children(".post");
-				return con.children(".header").find(sel)
-						.add(con.children(".footer").find(sel))
-						.find(".backlink" + (additional_selector || ""));
+				return con.children(".post_header")
+						.add(con.children(".post_footer:not(.hidden)")).find(".post_backlinks")
+						.find(".post_backlink" + (additional_selector || ""));
 			};
 
 			Post.Reference = (function () {
 
-				function Reference(origin, target_board, target_thread_id, target_post_id) {
+				var Reference = function (origin, target_board, target_thread_id, target_post_id) {
 					this.origin = origin;
 					this.target = null;
 					this.target_board = target_board;
@@ -12036,14 +12837,6 @@ var xch = (function () {
 
 					constructor: Instance,
 
-					add_inlined_instance: function (instance) {
-						this.inlined_instances.push(instance);
-					},
-					remove_inlines: function () {
-						for (var j = this.inlined_instances.length, i = j - 1; i >= 0; --i) {
-							this.inlined_instances[i].destroy();
-						}
-					},
 					destroy: function () {
 						// Remove from parent
 						var list, i, j;
@@ -12062,6 +12855,9 @@ var xch = (function () {
 							this.inlined_instances[i].destroy();
 						}
 
+						// Remove html events
+						this.post.unprepare(this);
+
 						// Remove from list
 						for (list = this.post.instances, i = 0, j = list.length; i < j; ++i) {
 							if (this == list[i]) {
@@ -12073,40 +12869,52 @@ var xch = (function () {
 
 						// Remove from html
 						this.container.remove();
+						this.container = null;
 					},
-					unbind_html_event: function (obj, event, maintained) {
-						var self = this, i;
 
-						obj.off(event);
-
-						if (maintained) {
-							obj.each(function () {
-								for (i = 0; i < self.html_events.length; ++i) {
-									if (self.html_events[i].object == this && self.html_events[i].event == event) {
-										self.html_events.splice(i, 1);
-										break;
-									}
-								}
-							});
+					add_inlined_instance: function (instance) {
+						this.inlined_instances.push(instance);
+					},
+					remove_inlines: function () {
+						for (var j = this.inlined_instances.length, i = j - 1; i >= 0; --i) {
+							this.inlined_instances[i].destroy();
 						}
 					},
-					bind_html_event: function (obj, event, data, callback, maintained) {
-						var self = this;
 
+					unbind_html_events: function () {
+						for (var i = 0; i < this.html_events.length; ++i) {
+							// Turn off event
+							$(this.html_events[i].object).off(this.html_events[i].event, this.html_events[i].callback);
+						}
+						this.html_events = [];
+					},
+					unbind_html_event: function (obj, event, maintained) {
+						for (var i = 0, j; i < obj.length; ++i) {
+							for (j = 0; j < this.html_events.length; ++j) {
+								if (this.html_events[j].object == obj[i] && this.html_events[j].event == event) {
+									// Turn off event
+									$(obj[i]).off(event, this.html_events[j].callback);
+									// Remove
+									this.html_events.splice(j, 1);
+									break;
+								}
+							}
+						}
+					},
+					bind_html_event: function (obj, event, data, callback, data_maintained) {
 						obj.on(event, data, callback);
 
 						// Run on each one
-						if (maintained) {
-							obj.each(function () {
-								/*!debug!*/assert(self.get_html_event(this, event) === null, "Duplicate event");
-								// Add to list
-								self.html_events.push({
-									object: this,
-									event: event,
-									data: data,
-									callback: callback
-								});
-							});
+						for (var i = 0; i < obj.length; ++i) {
+							/*!debug!*/assert(this.get_html_event(obj[i], event) === null, "Duplicate event");
+							// Add to list
+							var h_e = {
+								object: obj[i],
+								event: event,
+								callback: callback
+							};
+							if (data_maintained) h_e.data = data;
+							this.html_events.push(h_e);
 						}
 					},
 					get_html_event: function (obj, event) {
@@ -12129,7 +12937,7 @@ var xch = (function () {
 		// Post image
 		Image: (function () {
 
-			function Image() {
+			var Image = function () {
 				this.url = null;
 				this.thumbnail = null;
 				this.extension = null;
@@ -12173,7 +12981,7 @@ var xch = (function () {
 				image_preview_mousemove: function (event) {
 					// Positions
 					var me = $(this);
-					var inner = me.children(".inner");
+					var inner = me.children(".image_preview_inner_3");
 					var pos = inner.offset();
 
 					// Percent
@@ -12189,7 +12997,7 @@ var xch = (function () {
 
 					// Size
 					var max = (xch.settings.image_preview.zooming.invert ? 100 : -100);
-					inner.find(".origin>.size").css({ // Range: -50% to 50% for the zoomed offset
+					inner.find(".image_preview_size").css({ // Range: -50% to 50% for the zoomed offset
 						left: ((p.x - 0.5) * max).toFixed(2) + "%",
 						top: ((p.y - 0.5) * max).toFixed(2) + "%"
 					});
@@ -12361,59 +13169,48 @@ var xch = (function () {
 
 					// Create
 					var container, image_container, outer, connector, thumbnail, image;
-					(container = style.e("div"))
-					.addClass("floating image preview container")
+					(container = style.e("div", "image_preview"))
 					.append( //{
-						(image_container = style.e("div"))
-						.addClass("image container")
+						(image_container = style.e("div", "image_preview_inner_1"))
 						.append(
-							(outer = style.e("div"))
-							.addClass("outer")
+							(outer = style.e("div", "image_preview_inner_2"))
 							.append(
-								style.e("div")
-								.addClass("inner")
+								style.e("div", "image_preview_inner_3")
 								.append(
-									style.e("div")
-									.addClass("origin")
+									style.e("div", "image_preview_origin")
 									.append(
-										style.e("div")
-										.addClass("size")
-										.html(
-											style.e("div")
-											.addClass("image preview")
+										style.e("div", "image_preview_size")
+										.append(
+											style.e("div", "image_preview_image_container")
 											.append(
-												(thumbnail = style.e("div"))
-												.addClass("thumbnail")
+												(thumbnail = style.e("div", "image_preview_thumbnail"))
 											)
 											.append(
-												(image = style.e("img"))
-												.addClass("image")
+												(image = style.e("img", "image_preview_image"))
 												.attr("title", "")
 												.attr("alt", "")
 											)
 											.append(
-												style.e("div").addClass("overlay")
+												style.e("div", "image_preview_overlay")
 											)
 										)
 									)
 								)
 							)
 							.append(
-								style.e("div").addClass("info")
+								style.e("div", "image_preview_info")
 								.append(
-									style.e("span")
-									.addClass("dimensions")
+									style.e("span", "image_preview_info_item dimensions")
 									.html(this.width + "<i>" + style.symbols.mult + "</i>" + this.height)
 								)
 								.append(
-									style.e("span").addClass("zoom")
+									style.e("span", "image_preview_info_item zoom")
 								)
 							)
 						)
 					) //}
 					.append(
-						(connector = style.e("div"))
-						.addClass("connector")
+						(connector = style.e("div", "image_preview_connector"))
 						.css({
 							width: style.image_preview.padding.left + "px",
 							height: obj_height + "px",
@@ -12463,7 +13260,7 @@ var xch = (function () {
 						$(this).addClass("hidden");
 						thumbnail.removeClass("hidden").addClass("main");
 						image_container.children(".info").prepend(
-							style.e("span").addClass("error").text("Error loading image")
+							style.e("span", "error").text("Error loading image")
 						);
 					})
 
@@ -12489,13 +13286,13 @@ var xch = (function () {
 				},
 				position_preview: function (obj, container, event_data, mouse_bounded) {
 					// Objects
-					var image_container = container.children(".image.container");
-					var outer = image_container.children(".outer");
-					var c_origin = outer.find(".origin");
-					var c_size = c_origin.children(".size");
-					var preview = c_size.children(".image.preview");
-					var thumbnail = preview.children(".thumbnail");
-					var image = preview.children(".image");
+					var image_container = container.children(".image_preview_inner_1");
+					var outer = image_container.children(".image_preview_inner_2");
+					var c_origin = outer.find(".image_preview_origin");
+					var c_size = c_origin.children(".image_preview_size");
+					var preview = c_size.children(".image_preview_image_container");
+					var thumbnail = preview.children(".image_preview_thumbnail");
+					var image = preview.children(".image_preview_image");
 
 					// Object position
 					var win = $(window);
@@ -12510,7 +13307,7 @@ var xch = (function () {
 					obj_pos.left -= win_scroll.left;
 
 					// Zoom
-					image_container.find(".info>.zoom").html((event_data.zoom * 100) + "%");
+					image_container.find(".image_preview_info_item.zoom").text((event_data.zoom * 100) + "%");
 
 					// Paddings
 					var l_o = (obj_pos.left + obj_width + style.image_preview.padding.left);
@@ -12545,8 +13342,8 @@ var xch = (function () {
 						height: h_outer.toFixed(2) + "px"
 					};
 					c_origin.css({
-						width: (w - w_outer) + "px",
-						height: (h - h_outer) + "px"
+						width: (w - w_outer).toFixed(2) + "px",
+						height: (h - h_outer).toFixed(2) + "px"
 					});
 
 					// Position
@@ -12624,7 +13421,7 @@ var xch = (function () {
 					this.position_preview(obj, event_data.preview, event_data, true);
 
 					// Update zoom position
-					var outer = event_data.preview.find(".image.container>.outer");
+					var outer = event_data.preview.find(".image_preview_inner_2");
 					if (outer.length > 0) {
 						this_private.image_preview_mousemove.call(outer[0], event);
 					}
@@ -12653,7 +13450,7 @@ var xch = (function () {
 		// Styling
 		Style: (function () {
 
-			function Style(html) {
+			var Style = function (html) {
 				this.cls = "xch";
 				this.css = new Style.CSS();
 
@@ -12673,6 +13470,10 @@ var xch = (function () {
 						size: "14px",
 						style: "normal",
 						weight: "normal"
+					},
+					content_padding: {
+						top: 32,
+						bottom: 64
 					}
 				};
 
@@ -13370,7 +14171,18 @@ var xch = (function () {
 						style: "normal",
 						weight: "normal"
 					},
-					padding: 2
+					font_small: {
+						face: "arial,helvetica,sans-serif",
+						size: "10px",
+						style: "normal",
+						weight: "normal"
+					},
+					padding: {
+						left: 4,
+						top: 2,
+						right: 4,
+						bottom: 2
+					}
 				};
 
 				this.popup = {
@@ -13546,35 +14358,35 @@ var xch = (function () {
 							title_shadow: "#080808",
 							bg: "#e72d00",
 							link: "#f8f8f8",
-							link_hover: "#ff6666"
+							link_hover: "#008be7"
 						},
 						good: {
 							text: "#f8f8f8",
 							title_shadow: "#080808",
 							bg: "#008be7",
 							link: "#f8f8f8",
-							link_hover: "#ff6666"
+							link_hover: "#e72d00"
 						},
 						okay: {
 							text: "#f8f8f8",
 							title_shadow: "#080808",
 							bg: "#00ac04",
 							link: "#f8f8f8",
-							link_hover: "#ff6666"
+							link_hover: "#f6c500"
 						},
 						info: {
 							text: "#080808",
 							title_shadow: "#f8f8f8",
 							bg: "#f6c500",
 							link: "#080808",
-							link_hover: "#dd0000"
+							link_hover: "#a900e7"
 						},
 						parse: {
 							text: "#f8f8f8",
 							title_shadow: "#080808",
 							bg: "#a900e7",
 							link: "#f8f8f8",
-							link_hover: "#ff6666"
+							link_hover: "#f6c500"
 						}
 					},
 					border: {
@@ -13640,10 +14452,6 @@ var xch = (function () {
 							active: "#3191b7"
 						}
 					}
-				};
-
-				this.footer = {
-					size: 64
 				};
 
 				this.board_info = {
@@ -13735,7 +14543,8 @@ var xch = (function () {
 				.append( //{ Stylesheet
 					$("<style>")
 					.attr("id", "xch_style")
-					.html(this_private.parse_stylesheet.call(this, this.stylesheet_base = this_private.parse_stylesheet_pre.call(this,
+					.html(this_private.parse_stylesheet.call(this, this.stylesheet_base =
+						/*!stylesheet-pre-parse!*/this_private.parse_stylesheet_pre.call(this,
 						/*!stylesheet-start!*/
 						//{ Body
 						"body${background-color:<<body.colors.bg>>;background-image:none;margin:0px;padding:0px;border:0px hidden;overflow-x:auto;overflow-y:scroll;<<!font:body.font>>}\n" +
@@ -13750,9 +14559,6 @@ var xch = (function () {
 						//{ Post
 						"$.post_container+$.post_container{margin-top:<<post.separation>>px;}\n" +
 						"$.post_container{display:block;margin:0px;padding:0px;background-color:transparent;border:0px hidden;max-width:none;position:relative;}\n" +
-						"$.post_container>$.post{display:inline-block;margin:0px;padding:0px;max-width:none;color:<<post.colors.text>>;<<!font:post.font>>}\n" +
-						"$.post_container>$.post a{color:<<post.colors.link.text>>;}\n" +
-						"$.post_container>$.post a:hover{color:<<post.colors.link.text_hover>>;}\n" +
 						"$.post_container.op>$.post{display:block;}\n" +
 						"$.post_container.reply>$.post{background-color:<<post.colors.bg>>;border-width:<<post.border.top>>px <<post.border.right>>px <<post.border.bottom>>px <<post.border.left>>px;border-style:<<post.border.style>>;border-color:<<post.colors.border>>;<<css.border-radius>>:<<post.border.radius.topleft>>px <<post.border.radius.topright>>px <<post.border.radius.bottomright>>px <<post.border.radius.bottomleft>>px;}\n" +
 						"$.post_container.reply.highlighted>$.post{background-color:<<post.colors.bg_hl>>;border-color:<<post.colors.border_hl>>;}\n" +
@@ -13760,672 +14566,666 @@ var xch = (function () {
 						"$.post_container.op.focused>$.post{}\n" +
 						"$.post_container.reply.focused:not(.inline)>$.post{box-shadow:<<!shadow:post.focus.normal.shadow>>;z-index:1;}\n" +
 						"$.post_container.reply.focused.inline>$.post{box-shadow:<<!shadow:post.focus.inline.shadow>>;z-index:1;}\n" +
+
+						"$.post{display:inline-block;margin:0px;padding:0px;max-width:none;color:<<post.colors.text>>;<<!font:post.font>>}\n" +
 						//}
 
-						//{ Inline message
-						"$.inline.post_container.reply.message>$.post.message>$.header{position:relative;}\n" +
-						"$.inline.post_container.reply.message>$.post.message>$.header>$.progress.bar{background-color:transparent;position:absolute;left:0;right:0;bottom:0;height:<<post.load_bar.height>>px;}\n" +
-						"$.inline.post_container.reply.message>$.post.message>$.header>$.progress.bar.ajax{background-color:<<post.load_bar.colors.ajax>>;}\n" +
-						"$.inline.post_container.reply.message>$.post.message>$.header>$.progress.bar.parse{background-color:<<post.load_bar.colors.parse>>;}\n" +
-						"$.inline.post_container.reply.message>$.post.message>$.header>$.progress.bar>$.inner{position:absolute;left:0;width:0px;bottom:0;top:0;}\n" +
-						"$.inline.post_container.reply.message>$.post.message>$.header>$.progress.bar>$.inner.ajax{background-color:<<post.load_bar.colors.ajax>>;}\n" +
-						"$.inline.post_container.reply.message>$.post.message>$.header>$.progress.bar>$.inner.parse{background-color:<<post.load_bar.colors.parse>>;}\n" +
+						//{ Post header progress
+						"$.post_header_progress{background-color:transparent;position:absolute;left:0;right:0;bottom:0;height:<<post.load_bar.height>>px;}\n" +
+						"$.post_header_progress.ajax{background-color:<<post.load_bar.colors.ajax>>;}\n" +
+						"$.post_header_progress.parse{background-color:<<post.load_bar.colors.parse>>;}\n" +
+						"$.post_header_progress_inner{position:absolute;left:0;width:0px;bottom:0;top:0;}\n" +
+						"$.post_header_progress_inner.ajax{background-color:<<post.load_bar.colors.ajax>>;}\n" +
+						"$.post_header_progress_inner.parse{background-color:<<post.load_bar.colors.parse>>;}\n" +
 						//}
 
 						//{ Post header
-						"$.post_container>$.post>$.header{display:block;<<!font:post.header.font>>}\n" +
-						"$.post_container.op>$.post>$.header{padding:0px <<post.header.padding.right>>px 0px 0px;}\n" +
-						"$.post_container.reply>$.post>$.header{padding:<<post.header.padding.top>>px <<post.header.padding.right>>px <<post.header.padding.bottom>>px <<post.header.padding.left>>px;background-color:<<post.header.colors.bg>>;border-width:<<post.header.border.top>>px <<post.header.border.right>>px <<post.header.border.bottom>>px <<post.header.border.left>>px;border-style:<<post.header.border.style>>;border-color:<<post.header.colors.border>>;<<css.border-radius>>:<<post.border.radius.topleft>>px <<post.border.radius.topright>>px 0px 0px;}\n" +
-						"$.post_container.reply.highlighted>$.post>$.header{background-color:<<post.header.colors.bg_hl>>;border-color:<<post.header.colors.border_hl>>;}\n" +
-						"$.post_container>$.post>$.header.stub{display:none;}\n" +
-						"$.post_container>$.post>$.header>a," +
-						"$.post_container>$.post>$.header>span{vertical-align:middle;}" +
-						"$.post_container>$.post>$.header>a+a," +
-						"$.post_container>$.post>$.header>a+span," +
-						"$.post_container>$.post>$.header>span+a," +
-						"$.post_container>$.post>$.header>span+span{margin-left:<<post.header.spacing>>px;}\n" +
+						"$.post_header{position:relative;display:block;<<!font:post.header.font>>}\n" +
+						"$.post_container.op>$.post>$.post_header{padding:0px <<post.header.padding.right>>px 0px 0px;}\n" +
+						"$.post_container.reply>$.post>$.post_header{padding:<<post.header.padding.top>>px <<post.header.padding.right>>px <<post.header.padding.bottom>>px <<post.header.padding.left>>px;background-color:<<post.header.colors.bg>>;border-width:<<post.header.border.top>>px <<post.header.border.right>>px <<post.header.border.bottom>>px <<post.header.border.left>>px;border-style:<<post.header.border.style>>;border-color:<<post.header.colors.border>>;<<css.border-radius>>:<<post.border.radius.topleft>>px <<post.border.radius.topright>>px 0px 0px;}\n" +
+						"$.post_container.reply.highlighted>$.post>$.post_header{background-color:<<post.header.colors.bg_hl>>;border-color:<<post.header.colors.border_hl>>;}\n" +
+						"$.post_header>${vertical-align:middle;}" +
+						"$.post_header>$+$:not(.no_spacing){margin-left:<<post.header.spacing>>px;}\n" +
 						//}
 
 						//{ Post subject
-						"$.post_container>$.post>$.header>$.subject{color:<<post.header.subject.color>>;<<!font:post.header.subject.font>>}\n" +
+						"$.post_subject{color:<<post.header.subject.color>>;<<!font:post.header.subject.font>>}\n" +
 						//}
 
 						//{ Post header deleted indicators
-						"$.post_container>$.post>$.header>$.deleted_image{color:<<post.deleted_indicator.color>>;<<!font:post.deleted_indicator.font>>}\n" +
-						"$.post_container>$.post>$.header>$.deleted_image:after{content:\"<<!escape_string:post.deleted_indicator.image_text>>\";}\n" +
-						"$.post_container>$.post>$.header>$.deleted_post{color:<<post.deleted_indicator.color>>;<<!font:post.deleted_indicator.font>>}\n" +
-						"$.post_container>$.post>$.header>$.deleted_post:after{content:\"<<!escape_string:post.deleted_indicator.post_text>>\";}\n" +
+						"$.post_indicator_deleted_image{color:<<post.deleted_indicator.color>>;<<!font:post.deleted_indicator.font>>}\n" +
+						"$.post_indicator_deleted_image:after{content:\"<<!escape_string:post.deleted_indicator.image_text>>\";}\n" +
+						"$.post_indicator_deleted_post{color:<<post.deleted_indicator.color>>;<<!font:post.deleted_indicator.font>>}\n" +
+						"$.post_indicator_deleted_post:after{content:\"<<!escape_string:post.deleted_indicator.post_text>>\";}\n" +
 						//}
 
 						//{ Name
-						"$.post_container>$.post>$.header>$.identity{color:<<post.header.identity.name.colors.user>>;text-decoration:none;}\n" +
-						"$.post_container>$.post>$.header>$.identity[href]{color:<<post.header.identity.email_colors.text>>;text-decoration:underline;}\n" +
-						"$.post_container>$.post>$.header>$.identity[href]:hover{color:<<post.header.identity.email_colors.text_hover>>;}\n" +
-						"$.post_container>$.post>$.header>$.identity[href]>$.name{color:<<post.header.identity.email_colors.text>>;}\n" +
-						"$.post_container>$.post>$.header>$.identity[href]:hover>$.name{color:<<post.header.identity.email_colors.text_hover>>;}\n" +
-						"$.post_container>$.post>$.header>$.identity>$.name{<<!font:post.header.identity.name.font>>;}\n" +
-						"$.post_container>$.post>$.header>$.identity>$.tripcode{margin-left:0px;<<!font:post.header.identity.tripcode.font>>}\n" +
-						"$.post_container>$.post>$.header>$.identity>$.capcode{<<!font:post.header.identity.capcode.font>>}\n" +
-						"$.post_container>$.post>$.header>$.identity>$.name," +
-						"$.post_container>$.post>$.header>$.identity>$.tripcode," +
-						"$.post_container>$.post>$.header>$.identity>$.capcode{color:<<post.header.identity.name.colors.user>>;}\n" +
-						"$.post_container.mod>$.post>$.header>$.identity>$.name," +
-						"$.post_container.mod>$.post>$.header>$.identity>$.tripcode," +
-						"$.post_container.mod>$.post>$.header>$.identity>$.capcode{color:<<post.header.identity.name.colors.mod>>;}\n" +
-						"$.post_container.admin>$.post>$.header>$.identity>$.name," +
-						"$.post_container.admin>$.post>$.header>$.identity>$.tripcode," +
-						"$.post_container.admin>$.post>$.header>$.identity>$.capcode{color:<<post.header.identity.name.colors.admin>>;}\n" +
-						"$.post_container>$.post>$.header>$.identity>span+span{margin-left:<<post.header.identity.spacing>>px;}\n" +
+						"$.post_identity{color:<<post.header.identity.name.colors.user>>;text-decoration:none;}\n" +
+						"$.post_identity[href]{color:<<post.header.identity.email_colors.text>>;text-decoration:underline;}\n" +
+						"$.post_identity[href]:hover{color:<<post.header.identity.email_colors.text_hover>>;}\n" +
+						"$.post_identity[href]>$.post_identity_name{color:<<post.header.identity.email_colors.text>>;}\n" +
+						"$.post_identity[href]:hover>$.post_identity_name{color:<<post.header.identity.email_colors.text_hover>>;}\n" +
+						"$.post_identity_name{<<!font:post.header.identity.name.font>>;}\n" +
+						"$.post_identity_tripcode{margin-left:0px;<<!font:post.header.identity.tripcode.font>>}\n" +
+						"$.post_identity_capcode," +
+						"$.post_identity_capcode_indicator{<<!font:post.header.identity.capcode.font>>}\n" +
+						"$.post_identity_name," +
+						"$.post_identity_tripcode," +
+						"$.post_identity_capcode{color:<<post.header.identity.name.colors.user>>;}\n" +
+						"$.post_identity.mod>$.post_identity_name," +
+						"$.post_identity.mod>$.post_identity_tripcode," +
+						"$.post_identity.mod>$.post_identity_capcode," +
+						"$.post_identity.mod>$.post_identity_capcode_indicator{color:<<post.header.identity.name.colors.mod>>;}\n" +
+						"$.post_identity.admin>$.post_identity_name," +
+						"$.post_identity.admin>$.post_identity_tripcode," +
+						"$.post_identity.admin>$.post_identity_capcode," +
+						"$.post_identity.admin>$.post_identity_capcode_indicator{color:<<post.header.identity.name.colors.admin>>;}\n" +
+						"$.post_identity_capcode_indicator{padding:0px <<post.header.identity.spacing>>px;}\n" +
 						//}
 
 						//{ Time
-						"$.post_container>$.post>$.header>$.time{white-space:nowrap;<<!font:post.header.time.font>>}\n" +
+						"$.post_time{white-space:nowrap;<<!font:post.header.time.font>>}\n" +
 						//}
 
 						//{ Post id
-						"$.post_container>$.post>$.header>$.no," +
-						"$.post_container>$.post>$.header>$.number{text-decoration:none;color:<<post.header.number.colors.text>>;<<!font:post.header.number.font>>}\n" +
-						"$.post_container>$.post>$.header>$.number{margin-left:0px;}\n" +
-						"$.post_container>$.post>$.header>$.no:hover," +
-						"$.post_container>$.post>$.header>$.number:hover{color:<<post.header.number.colors.text_hover>>;}\n" +
-						"$.post_container>$.post>$.header>$.no:before{content:\" \";width:0px;display:inline-block;overflow:hidden;}\n" +
+						"$.post_no," +
+						"$.post_number{text-decoration:none;color:<<post.header.number.colors.text>>;<<!font:post.header.number.font>>}\n" +
+						"$.post_no:hover," +
+						"$.post_number:hover{color:<<post.header.number.colors.text_hover>>;}\n" +
+						"$.post_no:before{content:\" \";width:0px;display:inline-block;overflow:hidden;}\n" +
 						//}
 
 						//{ Icons
-						"$.post_container>$.post>$.header>$.icon{font-family:FontAwesome;text-decoration:none;display:inline-block;vertical-align:middle;color:<<post.header.icons.color>>;}\n" +
-						"$.post_container>$.post>$.header>$.icon.sticky:after{content:\"\\f08d\";}\n" +
-						"$.post_container>$.post>$.header>$.icon.locked:after{content:\"\\f023\";}\n" +
+						"$.post_icon{font-family:FontAwesome;text-decoration:none;display:inline-block;vertical-align:middle;color:<<post.header.icons.color>>;}\n" +
+						"$.post_icon.sticky:after{content:\"\\f08d\";}\n" +
+						"$.post_icon.locked:after{content:\"\\f023\";}\n" +
 						//}
 
 						//{ Post header options
-						"$.post_container>$.post>$.header>$.option{color:<<post.header.options.colors.text>>;<<!font:post.header.options.font>>}\n" +
-						"$.post_container>$.post>$.header>$.option:before{content:\"<<!escape_string:post.header.options.separator.start>>\";}\n" +
-						"$.post_container>$.post>$.header>$.option:after{content:\"<<!escape_string:post.header.options.separator.end>>\";}\n" +
-						"$.post_container>$.post>$.header>$.option>$.message{text-decoration:none;padding:0px <<post.header.options.spacing.inner>>px 0px <<post.header.options.spacing.inner>>px;color:<<post.header.options.colors.link>>;}\n" +
-						"$.post_container>$.post>$.header>$.option>$.message:hover{color:<<post.header.options.colors.link_hover>>;}\n" +
-						"$.post_container>$.post>$.header>$.option.reply_to>$.message:before{content:\"<<!escape_string:post.header.options.text.reply_to>>\";}\n" +
+						"$.post_option{color:<<post.header.options.colors.text>>;<<!font:post.header.options.font>>}\n" +
+						"$.post_option:before{content:\"<<!escape_string:post.header.options.separator.start>>\";}\n" +
+						"$.post_option:after{content:\"<<!escape_string:post.header.options.separator.end>>\";}\n" +
+						"$.post_option_text{text-decoration:none;padding:0px <<post.header.options.spacing.inner>>px 0px <<post.header.options.spacing.inner>>px;color:<<post.header.options.colors.link>>;}\n" +
+						"$.post_option_text:hover{color:<<post.header.options.colors.link_hover>>;}\n" +
+						"$.post_option.reply_to>$.post_option_text:before{content:\"<<!escape_string:post.header.options.text.reply_to>>\";}\n" +
 						//}
 
 						//{ Post header backlinks
-						"$.post_container>$.post>$.header>$.backlinks{<<!font:post.header.backlinks.font>>}\n" +
-						"$.post_container>$.post>$.header>$.backlinks.empty{display:none;}\n" +
-						"$.post_container>$.post>$.header>$.backlinks:not(.empty):before{content:\"<<!escape_string:post.header.backlinks.label>>\";}\n" +
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink:nth-of-type(1){margin-left:<<post.header.backlinks.spacing_first>>px;}\n" +
-						//}
-
-						//{ Post header settings link
-						"$.post_container>$.post>$.header>$.settings{color:<<post.header.options.colors.link>>;cursor:pointer;<<css.transition>>:opacity <<post.header.settings.opacity.transition.time>>s <<post.header.settings.opacity.transition.method>> <<post.header.settings.opacity.transition.delay>>s;}\n" +
-						"$.post_container>$.post:hover>$.header>$.settings{opacity:<<post.header.settings.opacity.hover>>;}\n" +
-						"$.post_container>$.post>$.header>$.settings:hover{color:<<post.header.options.colors.link_hover>>;}\n" +
-						"$.post_container>$.post:not(:hover)>$.header>$.settings{opacity:<<post.header.settings.opacity.normal>>;}\n" +
-						"$.post_container>$.post>$.header>$.settings:after{content:\"<<!escape_string:symbols.triangles.down>>\";}\n" +
-						//}
-
-						//{ Post image
-						"$.post_container>$.post>$.image.container{margin:0px;display:inline-block;float:left;}\n" +
-						"$.post_container>$.post>$.image.container.embed{margin:0px;display:block;float:none;}\n" +
-						"$.post_container.op>$.post>$.image.container{padding:0px <<post.comment.padding.left>>px 0px 0px;}\n" +
-						"$.post_container.reply>$.post>$.image.container{padding:<<post.comment.padding.top>>px <<post.comment.padding.left>>px <<post.comment.padding.bottom>>px <<post.image.padding.left>>px;}\n" +
-						"$.post_container.reply>$.post>$.image.container.embed{padding-bottom:0px;}\n" +
-						"$.post_container>$.post>$.image.container>$.image.link{padding:0px;margin:0px;border:0px hidden;display:inline-block;position:relative;}\n" +
-						"$.post_container.op>$.post>$.image.container>$.image.link{background-color:<<post.image.op.bg>>;}\n" +
-						"$.post_container.reply>$.post>$.image.container>$.image.link{background-color:<<post.image.reply.bg>>;}\n" +
-						"$.post_container>$.post>$.image.container>$.image.link>$.image{padding:0px;margin:0px;display:block;float:none;}\n" +
-						"$.post_container.op>$.post>$.image.container>$.image.link>$.image{box-shadow:<<!shadow:post.image.op.thumbnail.shadow>>;}\n" +
-						"$.post_container.reply>$.post>$.image.container>$.image.link>$.image{box-shadow:<<!shadow:post.image.reply.thumbnail.shadow>>;}\n" +
-						"$.post_container>$.post>$.image.container.embed>$.image.link>$.image:not(.full){display:none;}\n" +
-						"$.post_container>$.post>$.image.container.embed>$.image.link>$.image.full{position:relative;}\n" +
-						"$.post_container.op>$.post>$.image.container.embed>$.image.link>$.image.full{box-shadow:<<!shadow:post.image.op.full.shadow>>;}\n" +
-						"$.post_container.reply>$.post>$.image.container.embed>$.image.link>$.image.full{box-shadow:<<!shadow:post.image.reply.full.shadow>>;}\n" +
-						"$.post_container>$.post>$.image.container.embed>$.image.link>$.thumbnail{display:block;position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
-						"$.post_container>$.post>$.image.container.embed.loaded>$.image.link>$.thumbnail{display:none;}\n" +
-						//}
-
-						//{ File info
-						"$.post_container>$.post>$.file_info{margin:0px;<<!font:post.file_info.font>>}\n" +
-						"$.post_container.op>$.post>$.file_info{padding:0px 0px <<post.file_info.padding.bottom>>px 0px;}\n" +
-						"$.post_container.reply>$.post>$.file_info{padding:<<post.file_info.padding.top>>px <<post.file_info.padding.right>>px <<post.file_info.padding.bottom>>px <<post.file_info.padding.left>>px;margin-bottom:-<<post.comment.padding.top>>px;}\n" +
-						"$.post_container>$.post>$.file_info>$.file{text-decoration:none;<<!font:post.file_info.file_name.font>>}\n" +
-						"$.post_container>$.post>$.file_info>$.attributes{<<!font:post.file_info.attributes.font>>}\n" +
-						"$.post_container>$.post>$.file_info>$.attributes:before{content:\"<<!escape_string:post.file_info.attributes.prefix>>\";}\n" +
-						"$.post_container>$.post>$.file_info>$.attributes:after{content:\"<<!escape_string:post.file_info.attributes.suffix>>\";}\n" +
-						"$.post_container>$.post>$.file_info>a+a," +
-						"$.post_container>$.post>$.file_info>a+span," +
-						"$.post_container>$.post>$.file_info>span+a," +
-						"$.post_container>$.post>$.file_info>span+span{margin-left:<<post.file_info.spacing>>px;}\n" +
-
-						"$.post_container>$.post>$.file_info>$.post_file_info_extra_links{<<!font:post.file_info.file_extras.font>>}\n" +
-						"$.post_container>$.post>$.file_info>$.post_file_info_extra_links>$.post_file_info_extra_link{text-decoration:none;}\n" +
-						"$.post_container>$.post>$.file_info>$.post_file_info_extra_links>$.post_file_info_extra_link+$.post_file_info_extra_link{margin-left:<<post.file_info.file_extras.spacing>>px;}\n" +
-						//}
-
-						//{ Comment
-						"$.post_container>$.post>$.body," +
-						"$.post_container>$.post>$.body_full{color:<<post.comment.colors.text>>;display:block;margin:0px;<<!font:post.comment.font>>}\n" +
-						"$.post_container.op>$.post>$.body," +
-						"$.post_container.op>$.post>$.body_full{padding:<<post.comment.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px 0px;}\n" +
-						"$.post_container.reply>$.post>$.body," +
-						"$.post_container.reply>$.post>$.body_full{padding:<<post.comment.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px <<post.comment.padding.left>>px;}\n" +
-						"$.post_container.op>$.post>$.body:not(.full)+$.body_full," +
-						"$.post_container.reply>$.post>$.body:not(.full)+$.body_full{display:none;}\n" +
-						"$.post_container.op>$.post>$.body.full," +
-						"$.post_container.reply>$.post>$.body.full{display:none;}\n" +
-						"$.post_container>$.post>$.body_after{display:block;clear:both;height:0px;margin:0px;padding:0px;}" +
-						//}
-
-						//{ Notifications
-						"$.post_container>$.post>$.notifications{text-indent:<<post.notifications.spacing.outer>>px;margin-left:-<<post.notifications.spacing.outer>>px;}\n" +
-						"$.post_container.reply>$.post>$.notifications{padding:<<post.notifications.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px <<post.comment.padding.left>>px;margin-top:-<<post.comment.padding.bottom>>px;}\n" +
-						"$.post_container>$.post>$.notifications.empty{display:none;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification{vertical-align:middle;position:relative;text-indent:0px;display:inline-block;color:<<post.notifications.colors.text>>;<<!font:post.notifications.font>>}\n" +
-						"$.post_container>$.post>$.notifications>$.notification:before{vertical-align:middle;content:\"<<!escape_string:post.notifications.separator.start>>\";}\n" +
-						"$.post_container>$.post>$.notifications>$.notification:after{vertical-align:middle;content:\"<<!escape_string:post.notifications.separator.end>>\";}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message{vertical-align:middle;position:relative;text-decoration:none;padding:0px <<post.notifications.spacing.inner>>px 0px <<post.notifications.spacing.inner>>px;color:<<post.notifications.colors.link>>;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message>span{position:relative;vertical-align:baseline;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message:hover{color:<<post.notifications.colors.link_hover>>;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification.truncated>$.message>span:before{content:\"<<!escape_string:post.notifications.text.too_long>>\"}\n" +
-						"$.post_container>$.post>$.notifications>$.notification.truncated.expand>$.message>span:before{content:\"<<!escape_string:post.notifications.text.too_long_expand>>\"}\n" +
-						"$.post_container>$.post>$.notifications>$.notification.truncated.shrink>$.message>span:before{content:\"<<!escape_string:post.notifications.text.too_long_shrink>>\"}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message>$.progress.bar{position:absolute;left:0px;top:0;right:0px;bottom:0;opacity:<<post.notifications.progress.opacity>>;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification.loaded>$.message>$.progress.bar{display:none;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message>$.progress.bar.ajax{background-color:<<post.notifications.progress.colors.ajax>>;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message>$.progress.bar.parse{background-color:<<post.notifications.progress.colors.parse>>;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message>$.progress.bar>$.inner{position:absolute;left:0;top:0;width:0px;bottom:0;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message>$.progress.bar>$.inner.ajax{background-color:<<post.notifications.progress.colors.ajax>>;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification>$.message>$.progress.bar>$.inner.parse{background-color:<<post.notifications.progress.colors.parse>>;}\n" +
-						"$.post_container>$.post>$.notifications>$.notification+$.notification{padding-left:<<post.notifications.spacing.outer>>px;}\n" +
-						//}
-
-						//{ Footer
-						"$.post_container>$.post>$.footer{clear:both;display:block;margin:0px <<post.footer.padding.right_outer>>px <<post.footer.padding.bottom>>px <<post.footer.padding.left_outer>>px;border-width:<<post.footer.border.size>>px 0px 0px 0px;border-style:<<post.footer.border.style>>;padding:<<post.footer.padding.top_inner>>px <<post.footer.padding.right_inner>>px 0px <<post.footer.padding.left_inner>>px;<<!font:post.footer.font>>}\n" +
-						"$.post_container.op>$.post>$.footer{margin-left:0px;margin-right:0px;padding-left:0px;padding-right:0px;}\n" +
-						"$.post_container>$.post>$.notifications:not(.empty)+$.footer{margin-top:<<post.footer.padding.top_outer>>px;}\n" +
-						"$.post_container.op>$.post>$.footer{border-color:<<post.footer.border.colors.op>>;}\n" +
-						"$.post_container.op.highlighted>$.post>$.footer{border-color:<<post.footer.border.colors.reply>>;}\n" +
-						"$.post_container.reply>$.post>$.footer{border-color:<<post.footer.border.colors.reply_hl>>;}\n" +
-						"$.post_container.reply.highlighted>$.post>$.footer{border-color:<<post.footer.border.colors.reply_hl>>;}\n" +
-						"$.post_container>$.post>$.footer.empty," +
-						"$.post_container>$.post>$.footer.hidden{display:none;}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks:not(.empty):before{content:\"<<!escape_string:post.footer.backlinks.label>>\";}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink:nth-of-type(1){margin-left:<<post.footer.backlinks.spacing_first>>px;}\n" +
-						//}
-
-						//{ Backlink/reference targets
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink[to_target]:after," +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink[to_target]:after{white-space:nowrap;content:\"<<!escape_string:post.backlink_indicator.suffix_first>>\" attr(to_target) \"<<!escape_string:post.backlink_indicator.suffix_last>>\";}\n" +
-						"$.post_container>$.post>$.body a$.reference[to_target]:after{white-space:nowrap;content:\"<<!escape_string:post.reference_indicator.suffix_first>>\" attr(to_target) \"<<!escape_string:post.reference_indicator.suffix_last>>\";}\n" +
-						//}
-
-						//{ Comment stuff
-						"$.post_container>$.post>$.body $.spoiler{color:<<post.comment.colors.spoiler.text>>;background-color:<<post.comment.colors.spoiler.bg>>;}\n" +
-						"$.post_container>$.post>$.body $.spoiler:hover{color:<<post.comment.colors.spoiler.text_hover>>;background-color:<<post.comment.colors.spoiler.bg_hover>>;}\n" +
-						"$.post_container>$.post>$.body $.quote{color:<<post.comment.colors.quote.text>>;}\n" +
-						"$.post_container>$.post>$.body $.quote:hover{color:<<post.comment.colors.quote.text_hover>>;}\n" +
-						"$.post_container>$.post>$.body a{color:<<post.comment.colors.link.text>>;}\n" +
-						"$.post_container>$.post>$.body a:hover{color:<<post.comment.colors.link.text_hover>>;}\n" +
-						//}
-
-						//{ Comment references
-						"$.post_container>$.post>$.body a$.reference{color:<<post.comment.colors.reply_link.text>>;text-decoration:none;}\n" +
-						"$.post_container>$.post>$.body a$.reference:hover{color:<<post.comment.colors.reply_link.text_hover>>;}\n" +
-						"$.post_container>$.post>$.body a$.reference.open{color:<<post.comment.colors.reply_link.text_open>>;}\n" +
-						"$.post_container>$.post>$.body a$.reference.open:hover{color:<<post.comment.colors.reply_link.text_open_hover>>;}\n" +
-						"$.post_container>$.post>$.body a$.reference+$.inline.container{display:none;}\n" +
-						"$.post_container>$.post>$.body a$.reference.open+$.inline.container{display:table;}\n" +
-						"$.post_container>$.post>$.body a$.reference.open+$.inline.container+br{display:none;}\n" +
-						"$.post_container>$.post>$.body a$.reference.highlighted{border-width:0px 0px 1px 0px;margin-bottom:-1px;border-style:dashed;border-color:<<post.comment.colors.reply_link.text_hl>>;color:<<post.comment.colors.reply_link.text_hl>>;}\n" +
+						"$.post_backlinks{<<!font:post.header.backlinks.font>>}\n" +
+						"$.post_footer>$.post_backlinks{<<!font:post.footer.backlinks.font>>}\n" +
+						"$.post_backlinks.empty{display:none;}\n" +
+						"$.post_backlinks:not(.empty):before{content:\"<<!escape_string:post.header.backlinks.label>>\";}\n" +
+						"$.post_header>$.post_backlinks>$.post_backlink:first-child{margin-left:<<post.header.backlinks.spacing_first>>px;}\n" +
 						//}
 
 						//{ Backlinks
-						"$.post_container>$.post>$.header>$.backlinks{<<!font:post.header.backlinks.font>>}\n" +
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink{color:<<post.header.backlinks.colors.text>>;text-decoration:none;}\n" +
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink:hover{color:<<post.header.backlinks.colors.text_hover>>;}\n" +
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink.open{color:<<post.header.backlinks.colors.text_open>>;}\n" +
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink.open:hover{color:<<post.header.backlinks.colors.text_open_hover>>;}\n" +
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink.highlighted{border-width:0px 0px 1px 0px;margin-bottom:-1px;border-style:dashed;border-color:<<post.header.backlinks.colors.text_hl>>;color:<<post.header.backlinks.colors.text_hl>>;}\n" +
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink:before{content:\" \";width:0px;display:inline-block;overflow:hidden;}\n" +
-						"$.post_container>$.post>$.header>$.backlinks>$.backlink+$.backlink{margin-left:<<post.header.backlinks.spacing>>px;}\n" +
+						"$.post_backlink{color:<<post.header.backlinks.colors.text>>;text-decoration:none;}\n" +
+						"$.post_backlink:hover{color:<<post.header.backlinks.colors.text_hover>>;}\n" +
+						"$.post_backlink.open{color:<<post.header.backlinks.colors.text_open>>;}\n" +
+						"$.post_backlink.open:hover{color:<<post.header.backlinks.colors.text_open_hover>>;}\n" +
+						"$.post_backlink.highlighted{border-width:0px 0px 1px 0px;margin-bottom:-1px;border-style:dashed;border-color:<<post.header.backlinks.colors.text_hl>>;color:<<post.header.backlinks.colors.text_hl>>;}\n" +
+						"$.post_backlink:before{content:\" \";width:0px;display:inline-block;overflow:hidden;}\n" +
+						"$.post_backlink+$.post_backlink{margin-left:<<post.header.backlinks.spacing>>px;}\n" +
 
-						"$.post_container>$.post>$.footer>$.backlinks{<<!font:post.footer.backlinks.font>>}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink{color:<<post.footer.backlinks.colors.text>>;text-decoration:none;}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink:hover{color:<<post.footer.backlinks.colors.text_hover>>;}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink.open{color:<<post.footer.backlinks.colors.text_open>>;}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink.open:hover{color:<<post.footer.backlinks.colors.text_open_hover>>;}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink.highlighted{border-width:0px 0px 1px 0px;margin-bottom:-1px;border-style:dashed;border-color:<<post.footer.backlinks.colors.text_hl>>;color:<<post.footer.backlinks.colors.text_hl>>;}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink:before{content:\" \";width:0px;display:inline-block;overflow:hidden;}\n" +
-						"$.post_container>$.post>$.footer>$.backlinks>$.backlink+$.backlink{margin-left:<<post.footer.backlinks.spacing>>px;}\n" +
+						"$.post_footer>$.post_backlink{color:<<post.footer.backlinks.colors.text>>;text-decoration:none;}\n" +
+						"$.post_footer>$.post_backlink:hover{color:<<post.footer.backlinks.colors.text_hover>>;}\n" +
+						"$.post_footer>$.post_backlink.open{color:<<post.footer.backlinks.colors.text_open>>;}\n" +
+						"$.post_footer>$.post_backlink.open:hover{color:<<post.footer.backlinks.colors.text_open_hover>>;}\n" +
+						"$.post_footer>$.post_backlink.highlighted{border-width:0px 0px 1px 0px;margin-bottom:-1px;border-style:dashed;border-color:<<post.footer.backlinks.colors.text_hl>>;color:<<post.footer.backlinks.colors.text_hl>>;}\n" +
+						"$.post_footer>$.post_backlink:before{content:\" \";width:0px;display:inline-block;overflow:hidden;}\n" +
+						"$.post_footer>$.post_backlink+$.post_backlink{margin-left:<<post.footer.backlinks.spacing>>px;}\n" +
+						//}
+
+						//{ Post header settings link
+						"$.post_settings{color:<<post.header.options.colors.link>>;cursor:pointer;<<css.transition>>:opacity <<post.header.settings.opacity.transition.time>>s <<post.header.settings.opacity.transition.method>> <<post.header.settings.opacity.transition.delay>>s;opacity:<<post.header.settings.opacity.normal>>;}\n" +
+						"$.post:hover>$.post_header>$.post_settings{opacity:<<post.header.settings.opacity.hover>>;}\n" +
+						"$.post_settings:hover{color:<<post.header.options.colors.link_hover>>;}\n" +
+						"$.post_settings:after{content:\"<<!escape_string:symbols.triangles.down>>\";}\n" +
+						//}
+
+						//{ Post image
+						"$.post_image_container{margin:0px;padding:<<post.comment.padding.top>>px <<post.comment.padding.left>>px <<post.comment.padding.bottom>>px <<post.image.padding.left>>px;display:inline-block;float:left;}\n" +
+						"$.post_image_container.embed{margin:0px;padding-bottom:0px;display:block;float:none;}\n" +
+
+						"$.post_image_link{padding:0px;margin:0px;border:0px hidden;display:inline-block;position:relative;background-color:<<post.image.reply.bg>>;}\n" +
+						"$.post_image_link>$.post_image{padding:0px;margin:0px;display:block;float:none;box-shadow:<<!shadow:post.image.reply.thumbnail.shadow>>;}\n" +
+						"$.post_image_container.embed>$.post_image_link>$.post_image:not(.full){display:none;}\n" +
+						"$.post_image_container.embed>$.post_image_link>$.post_image.full{position:relative;box-shadow:<<!shadow:post.image.reply.full.shadow>>;}\n" +
+						"$.post_image_container.embed>$.post_image_link>$.post_image_thumbnail{display:block;position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
+						"$.post_image_container.embed.loaded>$.post_image_link>$.post_image_thumbnail{display:none;}\n" +
+
+						"$.post_container.op>$.post>$.post_image_container{padding:0px <<post.comment.padding.left>>px 0px 0px;}\n" +
+						"$.post_container.op>$.post>$.post_image_container>$.post_image_link{background-color:<<post.image.op.bg>>;}\n" +
+						"$.post_container.op>$.post>$.post_image_container>$.post_image_link>$.post_image{box-shadow:<<!shadow:post.image.op.thumbnail.shadow>>;}\n" +
+						"$.post_container.op>$.post>$.post_image_container.embed>$.post_image_link>$.post_image.full{box-shadow:<<!shadow:post.image.op.full.shadow>>;}\n" +
+						//}
+
+						//{ File info
+						"$.post_file_info{padding:<<post.file_info.padding.top>>px <<post.file_info.padding.right>>px <<post.file_info.padding.bottom>>px <<post.file_info.padding.left>>px;margin:0px 0px -<<post.comment.padding.top>>px 0px;<<!font:post.file_info.font>>}\n" +
+						"$.post_container.op>$.post>$.post_file_info{padding:0px 0px <<post.file_info.padding.bottom>>px 0px;margin:0px;}\n" +
+						"$.post_file_info_file{text-decoration:none;<<!font:post.file_info.file_name.font>>}\n" +
+						"$.post_file_info_attributes{<<!font:post.file_info.attributes.font>>}\n" +
+						"$.post_file_info_attributes:before{content:\"<<!escape_string:post.file_info.attributes.prefix>>\";}\n" +
+						"$.post_file_info_attributes:after{content:\"<<!escape_string:post.file_info.attributes.suffix>>\";}\n" +
+						"$.post_file_info>a+a," +
+						"$.post_file_info>a+span," +
+						"$.post_file_info>span+a," +
+						"$.post_file_info>span+span{margin-left:<<post.file_info.spacing>>px;}\n" +
+
+						"$.post_file_info_extra_links{<<!font:post.file_info.file_extras.font>>}\n" +
+						"$.post_file_info_extra_link{text-decoration:none;}\n" +
+						"$.post_file_info_extra_link+$.post_file_info_extra_link{margin-left:<<post.file_info.file_extras.spacing>>px;}\n" +
+						//}
+
+						//{ Comment
+						"$.post_body," +
+						"$.post_body_full{color:<<post.comment.colors.text>>;display:block;margin:0px;padding:<<post.comment.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px <<post.comment.padding.left>>px;<<!font:post.comment.font>>}\n" +
+						"$.post_container.op>$.post>$.post_body," +
+						"$.post_container.op>$.post>$.post_body_full{padding:<<post.comment.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px 0px;}\n" +
+						"$.post_body.full," +
+						"$.post_body:not(.full)+$.post_body_full{display:none;}\n" +
+						"$.post_body_after{display:block;clear:both;height:0px;margin:0px;padding:0px;}" +
+						//}
+
+						//{ Notifications
+						"$.post_notifications{text-indent:<<post.notifications.spacing.outer>>px;margin-left:-<<post.notifications.spacing.outer>>px;}\n" +
+						"$.post_notifications.empty{display:none;}\n" +
+						"$.post_container.reply>$.post>$.post_notifications{padding:<<post.notifications.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px <<post.comment.padding.left>>px;margin-top:-<<post.comment.padding.bottom>>px;}\n" +
+
+						"$.post_notification{vertical-align:middle;position:relative;text-indent:0px;display:inline-block;color:<<post.notifications.colors.text>>;<<!font:post.notifications.font>>}\n" +
+						"$.post_notification:before{vertical-align:middle;content:\"<<!escape_string:post.notifications.separator.start>>\";}\n" +
+						"$.post_notification:after{vertical-align:middle;content:\"<<!escape_string:post.notifications.separator.end>>\";}\n" +
+						"$.post_notification_message{vertical-align:middle;position:relative;text-decoration:none;padding:0px <<post.notifications.spacing.inner>>px 0px <<post.notifications.spacing.inner>>px;color:<<post.notifications.colors.link>>;}\n" +
+						"$.post_notification_message:hover{color:<<post.notifications.colors.link_hover>>;}\n" +
+
+						"$.post_notification_message>$.post_notification_text{position:relative;vertical-align:baseline;}\n" +
+						"$.post_notification.truncated>$.post_notification_message>$.post_notification_text:before{content:\"<<!escape_string:post.notifications.text.too_long>>\"}\n" +
+						"$.post_notification.truncated.expand>$.post_notification_message>$.post_notification_text:before{content:\"<<!escape_string:post.notifications.text.too_long_expand>>\"}\n" +
+						"$.post_notification.truncated.shrink>$.post_notification_message>$.post_notification_text:before{content:\"<<!escape_string:post.notifications.text.too_long_shrink>>\"}\n" +
+
+						"$.post_notification.loaded>$.post_notification_message>$.post_notification_progress{display:none;}\n" +
+						"$.post_notification_progress{position:absolute;left:0px;top:0;right:0px;bottom:0;opacity:<<post.notifications.progress.opacity>>;}\n" +
+						"$.post_notification_progress.ajax{background-color:<<post.notifications.progress.colors.ajax>>;}\n" +
+						"$.post_notification_progress.parse{background-color:<<post.notifications.progress.colors.parse>>;}\n" +
+						"$.post_notification_progress_inner{position:absolute;left:0;top:0;width:0px;bottom:0;}\n" +
+						"$.post_notification_progress_inner.ajax{background-color:<<post.notifications.progress.colors.ajax>>;}\n" +
+						"$.post_notification_progress_inner.parse{background-color:<<post.notifications.progress.colors.parse>>;}\n" +
+						"$.post_notification+$.post_notification{padding-left:<<post.notifications.spacing.outer>>px;}\n" +
+						//}
+
+						//{ Footer
+						"$.post_footer{clear:both;display:block;margin:0px <<post.footer.padding.right_outer>>px <<post.footer.padding.bottom>>px <<post.footer.padding.left_outer>>px;border-width:<<post.footer.border.size>>px 0px 0px 0px;border-style:<<post.footer.border.style>>;padding:<<post.footer.padding.top_inner>>px <<post.footer.padding.right_inner>>px 0px <<post.footer.padding.left_inner>>px;<<!font:post.footer.font>>}\n" +
+						"$.post_container.op>$.post>$.post_footer{margin-left:0px;margin-right:0px;padding-left:0px;padding-right:0px;border-color:<<post.footer.border.colors.op>>;}\n" +
+						"$.post_notifications:not(.empty)+$.post_footer{margin-top:<<post.footer.padding.top_outer>>px;}\n" +
+						"$.post_container.op.highlighted>$.post>$.post_footer{border-color:<<post.footer.border.colors.reply>>;}\n" +
+						"$.post_container.reply>$.post>$.post_footer{border-color:<<post.footer.border.colors.reply_hl>>;}\n" +
+						"$.post_container.reply.highlighted>$.post>$.post_footer{border-color:<<post.footer.border.colors.reply_hl>>;}\n" +
+						"$.post_footer.empty," +
+						"$.post_footer.hidden{display:none;}\n" +
+						"$.post_footer>$.post_backlinks:not(.empty):before{content:\"<<!escape_string:post.footer.backlinks.label>>\";}\n" +
+						"$.post_footer>$.post_backlinks>$.post_backlink:first-child{margin-left:<<post.footer.backlinks.spacing_first>>px;}\n" +
+						//}
+
+						//{ Backlink/reference targets
+						"$.post_backlink[to_target]:after{white-space:nowrap;content:\"<<!escape_string:post.backlink_indicator.suffix_first>>\" attr(to_target) \"<<!escape_string:post.backlink_indicator.suffix_last>>\";}\n" +
+						"$.post_reference[to_target]:after{white-space:nowrap;content:\"<<!escape_string:post.reference_indicator.suffix_first>>\" attr(to_target) \"<<!escape_string:post.reference_indicator.suffix_last>>\";}\n" +
+						//}
+
+						//{ Comment stuff
+						"$.spoiler{color:<<post.comment.colors.spoiler.text>>;background-color:<<post.comment.colors.spoiler.bg>>;}\n" +
+						"$.spoiler:hover{color:<<post.comment.colors.spoiler.text_hover>>;background-color:<<post.comment.colors.spoiler.bg_hover>>;}\n" +
+						"$.quote{color:<<post.comment.colors.quote.text>>;}\n" +
+						"$.quote:hover{color:<<post.comment.colors.quote.text_hover>>;}\n" +
+						"$.post_link{color:<<post.comment.colors.link.text>>;}\n" +
+						"$.post_link:hover{color:<<post.comment.colors.link.text_hover>>;}\n" +
+						//}
+
+						//{ Comment references
+						"$.post_reference{color:<<post.comment.colors.reply_link.text>>;text-decoration:none;}\n" +
+						"$.post_reference:hover{color:<<post.comment.colors.reply_link.text_hover>>;}\n" +
+						"$.post_reference.open{color:<<post.comment.colors.reply_link.text_open>>;}\n" +
+						"$.post_reference.open:hover{color:<<post.comment.colors.reply_link.text_open_hover>>;}\n" +
+						"$.post_reference+$.post_container.inline{display:table;}\n" +
+						"$.post_reference+$.post_container.inline+br{display:none;}\n" +
+						"$.post_reference.highlighted{border-width:0px 0px 1px 0px;margin-bottom:-1px;border-style:dashed;border-color:<<post.comment.colors.reply_link.text_hl>>;color:<<post.comment.colors.reply_link.text_hl>>;}\n" +
 						//}
 
 						//{ Floating inline
-						"body$>$.floating.container{position:absolute;left:0;top:0;right:0;margin:0px;padding:0px;}\n" +
-						"$.floating.inline.post_container{position:absolute;z-index:120;}\n" +
-						"$.floating.inline.post_container>$.post{box-shadow:<<!shadow:post.inline.floating.shadow>>;}\n" +
+						"$.floating_inline_container{position:absolute;left:0;top:0;right:0;margin:0px;padding:0px;}\n" +
+						"$.post_container.floating{position:absolute;z-index:120;display:inline-block;}\n" +
+						"$.post_container.floating>$.post{box-shadow:<<!shadow:post.inline.floating.shadow>>;}\n" +
 						//}
 
 						//{ Inlining
-						"$.post_container>$.post>$.embedded_backlink_container.empty{display:none;}\n" +
-						"$.post_container>$.post>$.embedded_backlink_container{padding:<<post.inline.container_padding.top>>px <<post.inline.container_padding.right>>px <<post.inline.container_padding.bottom>>px <<post.inline.container_padding.left>>px;}\n" +
-						"$.post_container>$.post>$.embedded_backlink_container>$.post_container.inline{display:table;}\n" +
+						"$.post_embedded_backlink_container.empty{display:none;}\n" +
+						"$.post_embedded_backlink_container{padding:<<post.inline.container_padding.top>>px <<post.inline.container_padding.right>>px <<post.inline.container_padding.bottom>>px <<post.inline.container_padding.left>>px;}\n" +
+						"$.post_embedded_backlink_container>$.post_container.inline{display:table;}\n" +
 						"$.post_container.inline>$.post{box-shadow:<<!shadow:post.inline.embedded.shadow>>;}\n" +
 						//}
 
 						//{ Image preview
-						"$.floating.image.preview.container{}\n" +
-						"$.floating.image.preview.container>$.image.container{position:fixed;z-index:200;display:block;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer{position:relative;width:100%;height:100%;background-color:<<image_preview.colors.bg>>;box-shadow:<<!shadow:image_preview.shadow>>;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner{position:relative;width:100%;height:100%;overflow:hidden;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin{position:absolute;left:50%;top:50%;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin>$.size{position:absolute;left:0;top:0;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin>$.size>$.image.preview{position:absolute;display:block;background-color:transparent;left:-50%;top:-50%;width:100%;height:100%;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin>$.size>$.image.preview>$.thumbnail{display:block;background-position:center center;background-repeat:no-repeat;background-color:transparent;opacity:<<image_preview.thumbnail.opacity>>;position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin>$.size>$.image.preview>$.thumbnail.hidden{display:none;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin>$.size>$.image.preview>$.thumbnail.main{display:block;opacity:1;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin>$.size>$.image.preview>$.image{display:block;float:none;margin:0px;padding:0px;border:0px;position:absolute;left:0;top:0;width:100%;height:100%;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin>$.size>$.image.preview>$.image.hidden{display:none;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.inner>$.origin>$.size>$.image.preview>$.overlay{display:block;background-color:transparent;position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.info{position:absolute;left:0;right:0;bottom:100%;padding:<<image_preview.header.padding.top>>px <<image_preview.header.padding.right>>px <<image_preview.header.padding.bottom>>px <<image_preview.header.padding.left>>px;color:<<image_preview.header.color>>;text-shadow:<<!shadow:image_preview.header.shadow>>;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.info>span$.error{color:<<image_preview.colors.error>>;}\n" +
-						"$.floating.image.preview.container>$.image.container>$.outer>$.info>span$+span$:before{content:\"<<!escape_string:image_preview.header.separator>>\"}\n" +
-						"$.floating.image.preview.container>$.connector{position:absolute;z-index:19;display:block;background-color:transparent;}\n" +
+						"$.image_preview{}\n" +
+						"$.image_preview_inner_1{position:fixed;z-index:200;display:block;}\n" +
+						"$.image_preview_inner_2{position:relative;width:100%;height:100%;background-color:<<image_preview.colors.bg>>;box-shadow:<<!shadow:image_preview.shadow>>;}\n" +
+						"$.image_preview_inner_3{position:relative;width:100%;height:100%;overflow:hidden;}\n" +
+						"$.image_preview_origin{position:absolute;left:50%;top:50%;}\n" +
+						"$.image_preview_size{position:absolute;left:0;top:0;}\n" +
+						"$.image_preview_image_container{position:absolute;display:block;background-color:transparent;left:-50%;top:-50%;width:100%;height:100%;}\n" +
+						"$.image_preview_thumbnail{display:block;background-position:center center;background-repeat:no-repeat;background-color:transparent;opacity:<<image_preview.thumbnail.opacity>>;position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
+						"$.image_preview_thumbnail.hidden{display:none;}\n" +
+						"$.image_preview_thumbnail.main{display:block;opacity:1;}\n" +
+						"$.image_preview_image{display:block;float:none;margin:0px;padding:0px;border:0px;position:absolute;left:0;top:0;width:100%;height:100%;}\n" +
+						"$.image_preview_image.hidden{display:none;}\n" +
+						"$.image_preview_overlay{display:block;background-color:transparent;position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
+						"$.image_preview_info{position:absolute;left:0;right:0;bottom:100%;padding:<<image_preview.header.padding.top>>px <<image_preview.header.padding.right>>px <<image_preview.header.padding.bottom>>px <<image_preview.header.padding.left>>px;color:<<image_preview.header.color>>;text-shadow:<<!shadow:image_preview.header.shadow>>;}\n" +
+						"$.image_preview_info_item.error{color:<<image_preview.colors.error>>;}\n" +
+						"$.image_preview_info_item+$.image_preview_info_item:before{content:\"<<!escape_string:image_preview.header.separator>>\"}\n" +
+						"$.image_preview_connector{position:absolute;z-index:19;display:block;background-color:transparent;}\n" +
 						//}
 
 						//{ Checkboxes
 						'$.checkbox{display:inline-block;background-color:<<checkbox_settings.colors.bg>>;border-style:solid;border-color:<<checkbox_settings.colors.border>>;overflow:hidden;cursor:pointer;vertical-align:middle;margin:0px;padding:0px;<<css.box-sizing>>:border-box;}\n' +
 						'$.checkbox:hover{border-color:<<checkbox_settings.colors.border_hover>>;background-color:<<checkbox_settings.colors.bg_hover>>;}\n' +
-						'$.checkbox svg{fill:<<checkbox_settings.colors.check>>;opacity:1;margin:0px;padding:0px;display:block;}\n' +
-						'$.checkbox:hover svg{fill:<<checkbox_settings.colors.check_hover>>;}\n' +
-						'$.checkbox input[type="checkbox"]{display:none;}\n' +
-						'$.checkbox input[type="checkbox"]:not(:checked)+svg{opacity:0;}\n' +
+						'$.checkbox_svg{fill:<<checkbox_settings.colors.check>>;opacity:1;margin:0px;padding:0px;display:block;}\n' +
+						'$.checkbox:hover>$.checkbox_svg{fill:<<checkbox_settings.colors.check_hover>>;}\n' +
+						'$.checkbox_input{display:none;}\n' +
+						'$.checkbox_input:not(:checked)+$.checkbox_svg{opacity:0;}\n' +
 
 						'$.checkbox.tiny{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.tiny.border_radius>>px;border-width:<<checkbox_settings.sizes.tiny.border_width>>px;}\n' +
-						'$.checkbox.tiny svg{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;}\n' +
+						'$.checkbox.tiny>$.checkbox_svg{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;}\n' +
 						'$.checkbox.small{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.small.border_radius>>px;border-width:<<checkbox_settings.sizes.small.border_width>>px;}\n' +
-						'$.checkbox.small svg{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;}\n' +
+						'$.checkbox.small>$.checkbox_svg{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;}\n' +
 						'$.checkbox.normal{width:<<checkbox_settings.sizes.normal.box_size>>px;height:<<checkbox_settings.sizes.normal.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.normal.border_radius>>px;border-width:<<checkbox_settings.sizes.normal.border_width>>px;}\n' +
-						'$.checkbox.normal svg{width:100%;height:100%;}\n' +
+						'$.checkbox.normal>$.checkbox_svg{width:100%;height:100%;}\n' +
+						//}
+
+						//{ Content padding
+						"$.content_padding.top{display:block;height:<<body.content_padding.top>>px;}\n" +
+						"$.content_padding.bottom{display:block;height:<<body.content_padding.bottom>>px;}\n" +
 						//}
 
 						//{ Header
-						"body$>$.header.container{}\n" +
-						"body$>$.header.container>$.padding{display:block;height:30px;}\n" +
-						"body$>$.header.container>$.header{position:absolute;left:0;top:0;right:0;z-index:100;<<!font:header.font>>}\n" +
-						"body$>$.header.container>$.header:after{clear:both;}\n" +
-						"body$>$.header.container>$.header.fixed{position:fixed;}\n" +
-						"body$>$.header.container>$.header>$.background{position:absolute;left:0;top:0;bottom:0;right:0;opacity:<<header.background.opacity>>;box-shadow:<<!shadow:header.background.shadow>>;<<!gradient:header.background.gradient>>}\n" +
-						"body$>$.header.container>$.header>$.content{display:block;position:relative;padding:<<header.padding>>px;}\n" +
+						"$.header{position:absolute;left:0;top:0;right:0;z-index:100;<<!font:header.font>>}\n" +
+						"$.header:after{clear:both;}\n" +
+						"$.header.fixed{position:fixed;}\n" +
+						"$.header_background{position:absolute;left:0;top:0;bottom:0;right:0;opacity:<<header.background.opacity>>;box-shadow:<<!shadow:header.background.shadow>>;<<!gradient:header.background.gradient>>}\n" +
+						"$.header_content{display:block;position:relative;padding:<<header.padding>>px;}\n" +
 
-						"body$>$.header.container>$.header>$.content>$.boards{display:inline;text-align:left;color:<<header.boards.colors.group>>;}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group{color:<<header.boards.colors.separator>>;}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group:before{content:\"<<!escape_string:header.separators.group_before>>\";}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group:after{content:\"<<!escape_string:header.separators.group_after>>\";}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group+$.group{margin-left:<<header.spacing.group>>px;}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board{display:inline-block;}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board+$.board:before{content:\"<<!escape_string:header.separators.group_inner>>\"}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board>a${padding:0px <<header.spacing.board>>px 0px <<header.spacing.board>>px;text-decoration:none;color:<<header.boards.colors.link>>;}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board>a$:hover{color:<<header.boards.colors.link_hover>>;}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board:not(.named)>a$>$.name," +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board:not(.current)>a$>$.name{display:none;}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board.current.named>a$>$.short{display:none;}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board.current>a${color:<<header.boards.current.colors.link>>;text-shadow:<<!shadow:header.boards.current.shadow>>;<<!font:header.boards.current.font>>}\n" +
-						"body$>$.header.container>$.header>$.content>$.boards>$.group>$.board.current>a$:hover{color:<<header.boards.current.colors.link_hover>>;text-shadow:<<!shadow:header.boards.current.shadow.hover>>;}\n" +
+						"$.header_boards{display:inline;text-align:left;color:<<header.boards.colors.group>>;}\n" +
+						"$.header_board_group{color:<<header.boards.colors.separator>>;}\n" +
+						"$.header_board_group:before{content:\"<<!escape_string:header.separators.group_before>>\";}\n" +
+						"$.header_board_group:after{content:\"<<!escape_string:header.separators.group_after>>\";}\n" +
+						"$.header_board_group+$.header_board_group{margin-left:<<header.spacing.group>>px;}\n" +
+						"$.header_board{display:inline-block;}\n" +
+						"$.header_board+$.header_board:before{content:\"<<!escape_string:header.separators.group_inner>>\"}\n" +
+						"$.header_board_link{padding:0px <<header.spacing.board>>px 0px <<header.spacing.board>>px;text-decoration:none;color:<<header.boards.colors.link>>;}\n" +
+						"$.header_board_link:hover{color:<<header.boards.colors.link_hover>>;}\n" +
+						"$.header_board:not(.named)>$.header_board_link>$.header_board_text_name," +
+						"$.header_board:not(.current)>$.header_board_link>$.header_board_text_name{display:none;}\n" +
+						"$.header_board.current.named>$.header_board_link>$.header_board_text_short{display:none;}\n" +
+						"$.header_board.current>$.header_board_link{color:<<header.boards.current.colors.link>>;text-shadow:<<!shadow:header.boards.current.shadow>>;<<!font:header.boards.current.font>>}\n" +
+						"$.header_board.current>$.header_board_link:hover{color:<<header.boards.current.colors.link_hover>>;text-shadow:<<!shadow:header.boards.current.shadow.hover>>;}\n" +
 
-						"body$>$.header.container>$.header>$.content>$.custom{display:inline-block;float:right;position:relative;white-space:nowrap;}\n" +
-						"body$>$.header.container>$.header>$.content>$.custom>$.options{display:block;padding-bottom:<<header.padding>>px;}\n" +
-						"body$>$.header.container>$.header>$.content>$.custom>$.options>$.option{display:inline-block;}\n" +
-						"body$>$.header.container>$.header>$.content>$.custom>$.options>a$.option{cursor:pointer;text-decoration:none;color:<<header.options.colors.link>>;}\n" +
-						"body$>$.header.container>$.header>$.content>$.custom>$.options>a$.option:hover{color:<<header.options.colors.link_hover>>;}\n" +
-						"body$>$.header.container>$.header>$.content>$.custom>$.options>$.option+$.option{margin-left:<<header.spacing.options>>px;}\n" +
+						"$.header_custom{display:inline-block;float:right;position:relative;white-space:nowrap;}\n" +
+						"$.header_options{display:block;padding-bottom:<<header.padding>>px;}\n" +
+						"$.header_option{display:inline-block;cursor:pointer;text-decoration:none;color:<<header.options.colors.link>>;}\n" +
+						"$.header_option:not(.no_link):hover{color:<<header.options.colors.link_hover>>;}\n" +
+						"$.header_option+$.header_option{margin-left:<<header.spacing.options>>px;}\n" +
 						//}
 
 						//{ Menu
 						"$.menu{position:absolute;display:inline-block;z-index:150;<<!font:menu.font>>}\n" +
+						"$.menu.small{position:absolute;display:inline-block;z-index:150;<<!font:menu.font_small>>}\n" +
 						"$.menu.fixed{position:fixed;}\n" +
 						"$.menu.hidden{display:none;}\n" +
-						"$.menu>$.background{position:absolute;left:0;top:0;bottom:0;right:0;box-shadow:<<!shadow:menu.shadow>>;opacity:<<menu.shadow.opacity>>;}\n" +
-						"$.menu>$.options{position:relative;}\n" +
-						"$.menu>$.options>$.option{position:relative;padding:<<menu.padding>>px;cursor:pointer;<<css.box-sizing>>:border-box;}\n" +
-						"$.menu>$.options>$.option>$.background{position:absolute;left:0;top:0;bottom:0;right:0;background-color:<<menu.colors.bg>>;border-width:<<menu.border.size>>px <<menu.border.size>>px 0px <<menu.border.size>>px;border-style:<<menu.border.style>>;border-color:<<menu.border.color>> <<menu.border.color>> <<menu.border.color>> <<menu.border.color>>;}\n" +
-						"$.menu>$.options>$.option:hover+$.option>$.background{border-top-color:<<menu.border.color_hover>>;}\n" +
-						"$.menu>$.options>$.option:last-child>$.background{border-bottom-width:1px;}\n" +
-						"$.menu>$.options>$.option:hover>$.background{background-color:<<menu.colors.bg_hover>>;border-color:<<menu.border.color_hover>> <<menu.border.color_hover>> <<menu.border.color_hover>> <<menu.border.color_hover>>;}\n" +
-						"$.menu>$.options>$.option>$.content{position:relative;}\n" +
-						"$.menu>$.options>$.option{text-decoration:none;position:relative;display:block;color:<<menu.colors.text>>;}\n" +
-						"$.menu>$.options>$.option:hover{position:relative;display:block;color:<<menu.colors.text_hover>>;}\n" +
+						"$.menu_background{position:absolute;left:0;top:0;bottom:0;right:0;box-shadow:<<!shadow:menu.shadow>>;opacity:<<menu.shadow.opacity>>;}\n" +
+						"$.menu_options{position:relative;}\n" +
+						"$.menu_option{white-space:nowrap;position:relative;padding:<<menu.padding.top>>px <<menu.padding.right>>px <<menu.padding.bottom>>px <<menu.padding.left>>px;cursor:pointer;<<css.box-sizing>>:border-box;text-decoration:none;position:relative;display:block;color:<<menu.colors.text>>;}\n" +
+						"$.menu_option:hover{position:relative;display:block;color:<<menu.colors.text_hover>>;}\n" +
+						"$.menu_option_background{position:absolute;left:0;top:0;bottom:0;right:0;background-color:<<menu.colors.bg>>;border-width:<<menu.border.size>>px <<menu.border.size>>px 0px <<menu.border.size>>px;border-style:<<menu.border.style>>;border-color:<<menu.border.color>> <<menu.border.color>> <<menu.border.color>> <<menu.border.color>>;}\n" +
+						"$.menu_option:hover>$.menu_option_background{background-color:<<menu.colors.bg_hover>>;border-color:<<menu.border.color_hover>> <<menu.border.color_hover>> <<menu.border.color_hover>> <<menu.border.color_hover>>;}\n" +
+						"$.menu_option:hover+$.menu_option>$.menu_option_background{border-top-color:<<menu.border.color_hover>>;}\n" +
+						"$.menu_option:last-child>$.menu_option_background{border-bottom-width:1px;}\n" +
+						"$.menu_option>$.menu_option_content{position:relative;}\n" +
+
+						"$.menu:not(.expandable_on_left)>$.menu_options.expandable>$.menu_option>$.menu_option_content:after{content:\"\";display:inline-block;width:1.5em;text-align:right;}\n" +
+						"$.menu:not(.expandable_on_left):not(.expandable_point_left)>$.menu_options.expandable>$.menu_option.expandable>$.menu_option_content:after{content:\"<<!escape_string:symbols.triangles.right>>\";}\n" +
+						"$.menu:not(.expandable_on_left).expandable_point_left>$.menu_options.expandable>$.menu_option.expandable>$.menu_option_content:after{content:\"<<!escape_string:symbols.triangles.left>>\";}\n" +
+						"$.menu.expandable_on_left>$.menu_options.expandable>$.menu_option>$.menu_option_content:before{content:\"\";display:inline-block;width:1.5em;text-align:left;}\n" +
+						"$.menu.expandable_on_left:not(.expandable_point_left)>$.menu_options.expandable>$.menu_option.expandable>$.menu_option_content:before{content:\"<<!escape_string:symbols.triangles.right>>\";}\n" +
+						"$.menu.expandable_on_left.expandable_point_left>$.menu_options.expandable>$.menu_option.expandable>$.menu_option_content:before{content:\"<<!escape_string:symbols.triangles.left>>\";}\n" +
 						//}
 
 						//{ Page selector
-						"$.page_selection.option{text-align:center;}\n" +
+						"$.menu_option.page_selection{text-align:center;}\n" +
 						//}
 
 						//{ Popups
 						"$.popup{position:fixed;z-index:170;<<css.box-sizing>>:border-box;color:<<popup.colors.text>>;<<!font:popup.font>>}\n" +
-						"$.popup>$.content{position:relative;margin:<<popup.bg.size>>px;}\n" +
-						"$.popup>$.content>$.title.bar{cursor:move;}\n" +
-						"$.popup>$.content>$.title.bar>$.title{text-shadow:<<!shadow:popup.title.shadow>>;<<!font:popup.title.font>>}\n" +
-						"$.popup>$.content>$.title.bar>$.close{cursor:pointer;position:absolute;right:0;top:0;color:<<popup.close.color>>;padding:0px <<popup.close.padding>>px 0px <<popup.close.padding>>px;}\n" +
-						"$.popup>$.content>$.title.bar>$.close:hover{color:<<popup.close.color_hover>>;}\n" +
-						"$.popup>$.content>$.title.bar>$.close:after{content:\"<<symbols.mult>>\";}\n" +
-						"$.popup>$.content>$.title.bar>$.close.hidden{display:none;}\n" +
-						"$.popup>$.content>$.description{<<!font:popup.description.font>>}\n" +
-						"$.popup>$.content>textarea$," +
-						"$.popup>$.content>input${display:block;width:100%;<<css.box-sizing>>:border-box;resize:none;<<!font:popup.input.font>>}\n" +
-						"$.popup>$.content>input$," +
-						"$.popup>$.content>textarea$," +
-						"$.popup>$.content>$.buttons>button${margin:0px;padding:<<popup.input.padding>>px;background-color:<<popup.input.colors.bg>>;color:<<popup.input.colors.text>>;border:<<popup.input.border.size>>px <<popup.input.border.style>> <<popup.input.border.color>>;}\n" +
-						"$.popup>$.content>input$:hover," +
-						"$.popup>$.content>textarea$:hover," +
-						"$.popup>$.content>$.buttons>button$:hover{background-color:<<popup.input.colors.bg_hover>>;border-color:<<popup.input.border.color_hover>>;}\n" +
-						"$.popup>$.content>input$:focus," +
-						"$.popup>$.content>textarea$:focus," +
-						"$.popup>$.content>$.buttons>button$:active{background-color:<<popup.input.colors.bg_selected>>;border-color:<<popup.input.border.color_selected>>;}\n" +
-						"$.popup>$.content>$.buttons{text-align:right;}\n" +
+						"$.popup_content{position:relative;margin:<<popup.bg.size>>px;}\n" +
+						"$.popup_title_bar{cursor:move;}\n" +
 
-						"$.popup input$," +
-						"$.popup textarea${color:<<popup.input.colors.text>>;<<!font:popup.input.font>>}\n" +
-						"$.popup input$::-webkit-input-placeholder," +
-						"$.popup textarea$::-webkit-input-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
-						"$.popup input$:-moz-placeholder," +
-						"$.popup textarea$:-moz-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
-						"$.popup input$::-moz-placeholder," +
-						"$.popup textarea$::-moz-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
-						"$.popup input$:-ms-input-placeholder," +
-						"$.popup textarea$:-ms-input-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
+						"$.popup_title{text-shadow:<<!shadow:popup.title.shadow>>;<<!font:popup.title.font>>}\n" +
 
+						"$.popup_close{cursor:pointer;position:absolute;right:0;top:0;color:<<popup.close.color>>;padding:0px <<popup.close.padding>>px 0px <<popup.close.padding>>px;}\n" +
+						"$.popup_close:hover{color:<<popup.close.color_hover>>;}\n" +
+						"$.popup_close:after{content:\"<<symbols.mult>>\";}\n" +
+						"$.popup_close.hidden{display:none;}\n" +
 
-						"$.popup>$.content>$.buttons>button${cursor:pointer;display:inline-block;<<css.box-sizing>>:border-box;<<!font:popup.input.font>>}\n" +
-						"$.popup>$.content>$.buttons>button$+button${margin-left:<<popup.buttons.spacing>>px;}\n" +
+						"$.popup_description{<<!font:popup.description.font>>}\n" +
+						"$.popup_input{display:block;width:100%;<<css.box-sizing>>:border-box;resize:none;<<!font:popup.input.font>>}\n" +
+						"$.popup_input," +
+						"$.popup_button{margin:0px;padding:<<popup.input.padding>>px;background-color:<<popup.input.colors.bg>>;color:<<popup.input.colors.text>>;border:<<popup.input.border.size>>px <<popup.input.border.style>> <<popup.input.border.color>>;}\n" +
+						"$.popup_input:hover," +
+						"$.popup_button:hover{background-color:<<popup.input.colors.bg_hover>>;border-color:<<popup.input.border.color_hover>>;}\n" +
+						"$.popup_input:focus," +
+						"$.popup_button:active{background-color:<<popup.input.colors.bg_selected>>;border-color:<<popup.input.border.color_selected>>;}\n" +
 
-						"$.popup>$.content>*$+*${margin-top:<<popup.separation>>px;}\n" +
+						"$.popup_buttons{text-align:right;}\n" +
 
-						"$.popup>$.background{position:absolute;left:0;top:0;bottom:0;right:0;background:<<popup.bg.color>>;<<css.border-radius>>:<<popup.bg.radius>>px;box-shadow:<<!shadow:popup.bg.shadow>>;opacity:<<popup.bg.opacity>>;}\n" +
-						"$.popup>$.background>$.resizers{position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
-						"$.popup>$.background>$.resizers.hidden{display:none;}\n" +
-						"$.popup>$.background>$.resizers>*${position:absolute;}\n" +
-						"$.popup>$.background>$.resizers>$.top{height:<<popup.resizers.size>>px;top:0;cursor:n-resize;}" +
-						"$.popup>$.background>$.resizers>$.bottom{height:<<popup.resizers.size>>px;bottom:0;cursor:n-resize;}\n" +
-						"$.popup>$.background>$.resizers>$.left{width:<<popup.resizers.size>>px;left:0;cursor:e-resize;}" +
-						"$.popup>$.background>$.resizers>$.right{width:<<popup.resizers.size>>px;right:0;cursor:e-resize;}\n" +
-						"$.popup>$.background>$.resizers>$.top:not(.left):not(.right)," +
-						"$.popup>$.background>$.resizers>$.bottom:not(.left):not(.right){left:<<popup.resizers.size>>px;right:<<popup.resizers.size>>px;}\n" +
-						"$.popup>$.background>$.resizers>$.left:not(.top):not(.bottom)," +
-						"$.popup>$.background>$.resizers>$.right:not(.top):not(.bottom){top:<<popup.resizers.size>>px;bottom:<<popup.resizers.size>>px;}\n" +
-						"$.popup>$.background>$.resizers>$.top.left{cursor:se-resize;}\n" +
-						"$.popup>$.background>$.resizers>$.top.right{cursor:sw-resize;}\n" +
-						"$.popup>$.background>$.resizers>$.bottom.right{cursor:se-resize;}\n" +
-						"$.popup>$.background>$.resizers>$.bottom.left{cursor:sw-resize;}\n" +
+						"$.popup_input{color:<<popup.input.colors.text>>;<<!font:popup.input.font>>}\n" +
+						"$.popup_input::-webkit-input-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
+						"$.popup_input:-moz-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
+						"$.popup_input::-moz-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
+						"$.popup_input:-ms-input-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
 
+						"$.popup_button{cursor:pointer;display:inline-block;<<css.box-sizing>>:border-box;<<!font:popup.input.font>>}\n" +
+						"$.popup_button+$.popup_button{margin-left:<<popup.buttons.spacing>>px;}\n" +
+
+						"$.popup_content:not(.packed)>$.popup_content_item+$.popup_content_item{margin-top:<<popup.separation>>px;}\n" +
+
+						"$.popup_background{position:absolute;left:0;top:0;bottom:0;right:0;background:<<popup.bg.color>>;<<css.border-radius>>:<<popup.bg.radius>>px;box-shadow:<<!shadow:popup.bg.shadow>>;opacity:<<popup.bg.opacity>>;}\n" +
+						"$.popup_resizers{position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
+						"$.popup_resizers.hidden{display:none;}\n" +
+						"$.popup_resizer${position:absolute;}\n" +
+						"$.popup_resizer.top{height:<<popup.resizers.size>>px;top:0;cursor:n-resize;}" +
+						"$.popup_resizer.bottom{height:<<popup.resizers.size>>px;bottom:0;cursor:n-resize;}\n" +
+						"$.popup_resizer.left{width:<<popup.resizers.size>>px;left:0;cursor:e-resize;}" +
+						"$.popup_resizer.right{width:<<popup.resizers.size>>px;right:0;cursor:e-resize;}\n" +
+						"$.popup_resizer.top:not(.left):not(.right)," +
+						"$.popup_resizer.bottom:not(.left):not(.right){left:<<popup.resizers.size>>px;right:<<popup.resizers.size>>px;}\n" +
+						"$.popup_resizer.left:not(.top):not(.bottom)," +
+						"$.popup_resizer.right:not(.top):not(.bottom){top:<<popup.resizers.size>>px;bottom:<<popup.resizers.size>>px;}\n" +
+						"$.popup_resizer.top.left{cursor:se-resize;}\n" +
+						"$.popup_resizer.top.right{cursor:sw-resize;}\n" +
+						"$.popup_resizer.bottom.right{cursor:se-resize;}\n" +
+						"$.popup_resizer.bottom.left{cursor:sw-resize;}\n" +
 						//}
 
 						//{ Quick reply
 						"$.quick_reply{position:fixed;display:inline-block;z-index:115;}\n" +
 						"$.quick_reply.closed{display:none;}\n" +
 
-						"$.quick_reply>$.container{margin:<<popup.bg.size>>px;position:relative;z-index:5;}\n" +
-						"$.quick_reply>$.container>$.row{display:block;line-height:0px;white-space:nowrap;position:relative;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell{vertical-align:middle;display:inline-block;<<css.box-sizing>>:border-box;position:relative;line-height:normal;white-space:normal;}\n" +
+						"$.quick_reply>$.popup_content{margin:<<popup.bg.size>>px;position:relative;z-index:5;}\n" +
+						"$.qr_row{display:block;line-height:0px;white-space:nowrap;position:relative;}\n" +
+						"$.qr_cell{vertical-align:middle;display:inline-block;<<css.box-sizing>>:border-box;position:relative;line-height:normal;white-space:normal;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div${border:<<popup.input.border.size>>px solid transparent;<<css.box-sizing>>:border-box;width:100%;height:100%;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.b," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.l," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.t{position:absolute;z-index:-3;<<css.box-sizing>>:border-box;border:<<popup.input.border.size>>px <<popup.input.border.style>> <<popup.input.border.color>>;}" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.b{background:<<popup.input.colors.bg>>;left:0;top:0;bottom:0;right:0;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.l{right:100%;top:0;bottom:0;border-left-width:0px;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.t{left:0;bottom:100%;right:0;border-top-width:0px;}\n" +
+						"$.qr_cell_inner{border:<<popup.input.border.size>>px solid transparent;<<css.box-sizing>>:border-box;width:100%;height:100%;padding:0px;}\n" +
+						"$.qr_cell_inner_b," +
+						"$.qr_cell_inner_l," +
+						"$.qr_cell_inner_t{position:absolute;z-index:-3;<<css.box-sizing>>:border-box;border:<<popup.input.border.size>>px <<popup.input.border.style>> <<popup.input.border.color>>;}" +
+						"$.qr_cell_inner_b{background:<<popup.input.colors.bg>>;left:0;top:0;bottom:0;right:0;}\n" +
+						"$.qr_cell_inner_l{right:100%;top:0;bottom:0;border-left-width:0px;}\n" +
+						"$.qr_cell_inner_t{left:0;bottom:100%;right:0;border-top-width:0px;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell:nth-of-type(1)>div$>$.l{display:none;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell:nth-of-type(n+2)>div$,\n" +
-						"$.quick_reply>$.container>$.row>$.cell:nth-of-type(n+2)>div$>$.b{border-left-width:0px;}\n" +
-						"$.quick_reply>$.container:not(.packed)>$.row>$.cell>div$>$.t," +
-						"$.quick_reply>$.container>$.row.top>$.cell>div$>$.t{display:none;}\n" +
-						"$.quick_reply>$.container.packed>$.row:not(.top)>$.cell>div$," +
-						"$.quick_reply>$.container.packed>$.row:not(.top)>$.cell>div$>$.b{border-top-width:0px;}\n" +
+						"$.qr_cell:nth-of-type(1)>$.qr_cell_inner>$.qr_cell_inner_l{display:none;}\n" +
+						"$.qr_cell:nth-of-type(n+2)>$.qr_cell_inner,\n" +
+						"$.qr_cell:nth-of-type(n+2)>$.qr_cell_inner>$.qr_cell_inner_b{border-left-width:0px;}\n" +
+						"$.qr_row.top>$.qr_cell>$.qr_cell_inner>$.qr_cell_inner_t," +
+						"$.popup_content:not(.packed)>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_cell_inner_t{display:none;}\n" +
+						"$.popup_content.packed>$.qr_row:not(.top)>$.qr_cell>$.qr_cell_inner," +
+						"$.popup_content.packed>$.qr_row:not(.top)>$.qr_cell>$.qr_cell_inner>$.qr_cell_inner_b{border-top-width:0px;}\n" +
 
-						"$.quick_reply>$.container>$.row.top>$.cell:first-child>div$>$.b{<<css.border-top-left-radius>>:<<popup.input.border.radius>>px;}\n" +
-						"$.quick_reply>$.container>$.row.top>$.cell:last-child>div$>$.b{<<css.border-top-right-radius>>:<<popup.input.border.radius>>px;}\n" +
-						"$.quick_reply>$.container>$.row.bottom>$.cell:first-child>div$>$.b{<<css.border-bottom-left-radius>>:<<popup.input.border.radius>>px;}\n" +
-						"$.quick_reply>$.container>$.row.bottom>$.cell:last-child>div$>$.b{<<css.border-bottom-right-radius>>:<<popup.input.border.radius>>px;}\n" +
+						"$.qr_row.top>$.qr_cell:first-child>$.qr_cell_inner>$.qr_cell_inner_b{<<css.border-top-left-radius>>:<<popup.input.border.radius>>px;}\n" +
+						"$.qr_row.top>$.qr_cell:last-child>$.qr_cell_inner>$.qr_cell_inner_b{<<css.border-top-right-radius>>:<<popup.input.border.radius>>px;}\n" +
+						"$.qr_row.bottom>$.qr_cell:first-child>$.qr_cell_inner>$.qr_cell_inner_b{<<css.border-bottom-left-radius>>:<<popup.input.border.radius>>px;}\n" +
+						"$.qr_row.bottom>$.qr_cell:last-child>$.qr_cell_inner>$.qr_cell_inner_b{<<css.border-bottom-right-radius>>:<<popup.input.border.radius>>px;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell:hover>div$>$.b," +
-						"$.quick_reply>$.container>$.row>$.cell:hover>div$>$.l," +
-						"$.quick_reply>$.container>$.row>$.cell:hover>div$>$.t{z-index:-2;border-color:<<popup.input.border.color_hover>>;}" +
-						"$.quick_reply>$.container>$.row>$.cell:hover>div$>$.b{background:<<popup.input.colors.bg_hover>>;}\n" +
+						"$.qr_cell:hover>$.qr_cell_inner>$.qr_cell_inner_b," +
+						"$.qr_cell:hover>$.qr_cell_inner>$.qr_cell_inner_l," +
+						"$.qr_cell:hover>$.qr_cell_inner>$.qr_cell_inner_t{z-index:-2;border-color:<<popup.input.border.color_hover>>;}" +
+						"$.qr_cell:hover>$.qr_cell_inner>$.qr_cell_inner_b{background:<<popup.input.colors.bg_hover>>;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div$>input:focus+$.b," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>input:focus+$.b+$.l," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>input:focus+$.b+$.l+$.t," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>textarea:focus+$.b," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>textarea:focus+$.b+$.l," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>textarea:focus+$.b+$.l+$.t," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>button:active:focus+$.b," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>button:active:focus+$.b+$.l," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>button:active:focus+$.b+$.l+$.t{z-index:-1;border-color:<<popup.input.border.color_selected>>;}" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>input:focus+$.b," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>textarea:focus+$.b," +
-						"$.quick_reply>$.container>$.row>$.cell>div$>button:active+$.b{background:<<popup.input.colors.bg_selected>>;}\n" +
+						"$.qr_input:focus+$.qr_cell_inner_b," +
+						"$.qr_input:focus+$.qr_cell_inner_b+$.qr_cell_inner_l," +
+						"$.qr_input:focus+$.qr_cell_inner_b+$.qr_cell_inner_l+$.qr_cell_inner_t," +
+						"$.qr_button:active+$.qr_cell_inner_b," +
+						"$.qr_button:active+$.qr_cell_inner_b+$.qr_cell_inner_l," +
+						"$.qr_button:active+$.qr_cell_inner_b+$.qr_cell_inner_l+$.qr_cell_inner_t{z-index:-1;border-color:<<popup.input.border.color_selected>>;}" +
+						"$.qr_input:focus+$.qr_cell_inner_b," +
+						"$.qr_button:active+$.qr_cell_inner_b{background:<<popup.input.colors.bg_selected>>;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell.no_bg>div${border-width:0px;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell.no_bg>div$>$.l," +
-						"$.quick_reply>$.container>$.row>$.cell.no_bg>div$>$.t{display:none;}" +
-						"$.quick_reply>$.container>$.row>$.cell.no_bg>div$>$.b{border-width:0px;background:transparent !important;}\n" +
+						"$.qr_cell.no_bg>$.qr_cell_inner{border-width:0px;}\n" +
+						"$.qr_cell.no_bg>$.qr_cell_inner>$.qr_cell_inner_l," +
+						"$.qr_cell.no_bg>$.qr_cell_inner>$.qr_cell_inner_t{display:none;}" +
+						"$.qr_cell.no_bg>$.qr_cell_inner>$.qr_cell_inner_b{border-width:0px;background:transparent;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div$>input${width:100%;margin:0px;padding:<<popup.input.padding>>px;border:0px hidden;background:transparent;<<css.box-sizing>>:border-box;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>textarea${width:100%;margin:0px;padding:<<popup.input.padding>>px;resize:none;border:0px hidden;background:transparent;<<css.box-sizing>>:border-box;}\n" +
+						"$.popup_input.qr_input," +
+						"$.popup_input.qr_input:hover," +
+						"$.popup_input.qr_input:focus{width:100%;margin:0px;padding:<<popup.input.padding>>px;resize:none;border:0px hidden;background:transparent;<<css.box-sizing>>:border-box;}\n" +
 
-						"$.quick_reply>$.container:not(.packed)>$.row+$.row{margin-top:<<popup.separation>>px;}\n" +
+						"$.popup_content:not(.packed)>$.qr_row+$.qr_row{margin-top:<<popup.separation>>px;}\n" +
 						//}
 
-						//{ Quick reply items
-						"$.quick_reply>$.container>$.row.grab{cursor:move;}\n" +
+						//{! Quick reply items
+						"$.qr_row.grab{cursor:move;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div${padding:0px;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.submit{cursor:pointer;width:100%;display:block;text-align:center;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.submit{background:transparent;border:0px hidden;<<css.box-sizing>>:border-box;padding:0px;margin:0px;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.submit:active{}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.submit>span:before{content:\"<<!escape_string:qr.submit.text>>\";}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.submit.active>span:before{content:\"<<!escape_string:qr.submit.text_active>>\";}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.submit.retry>span:before{content:\"<<!escape_string:qr.submit.text_retry>>\";}\n" +
+						"$.qr_submit{cursor:pointer;width:100%;display:block;text-align:center;}\n" +
+						"$.qr_submit{background:transparent;border:0px hidden;<<css.box-sizing>>:border-box;padding:0px;margin:0px;}\n" +
+						"$.qr_submit:active{}\n" +
+						"$.qr_submit_text:before{content:\"<<!escape_string:qr.submit.text>>\";}\n" +
+						"$.qr_submit.active>$.qr_submit_text:before{content:\"<<!escape_string:qr.submit.text_active>>\";}\n" +
+						"$.qr_submit.retry>$.qr_submit_text:before{content:\"<<!escape_string:qr.submit.text_retry>>\";}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label{white-space:nowrap;display:inline-block;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label>$.text{cursor:default;color:<<qr.label.color>>;cursor:pointer;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label>$.text:hover{color:<<qr.label.color_hover>>;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label>$.text:before{content:\"<<!escape_string:qr.label.text.quick_reply>>\";}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label>$.target{cursor:default;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label>$.target>*{color:<<qr.target.color>>;cursor:pointer;text-decoration:none;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label>$.target>*:hover{color:<<qr.target.color_hover>>;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label>$.target:before{content:\"<<!escape_string:qr.target.text.left>>\";padding-right:<<qr.target.padding.inner>>px;color:<<!escape_string:qr.target.text.color>>;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.main_label>$.target:after{content:\"<<!escape_string:qr.target.text.right>>\";padding-left:<<qr.target.padding.inner>>px;color:<<!escape_string:qr.target.text.color>>;}\n" +
-						"$.quick_reply.persistent>$.container>$.row>$.cell>div$>$.main_label>$.text:before{content:\"<<!escape_string:qr.label.text.reply>>\";}\n" +
-						"$.quick_reply[target_thread=\"new\"]>$.container>$.row>$.cell>div$>$.main_label>$.text{display:none;}\n" +
-						"$.quick_reply[target_thread=\"current\"]>$.container>$.row>$.cell>div$>$.main_label>$.target{display:none;}\n" +
-						"$.quick_reply:not([target_thread=\"new\"])>$.container>$.row>$.cell>div$>$.main_label>$.text+$.target{padding-left:<<qr.target.padding.outer>>px;}\n" +
+						"$.qr_main_label{white-space:nowrap;display:inline-block;}\n" +
+						"$.qr_main_label_prefix{cursor:default;color:<<qr.label.color>>;cursor:pointer;}\n" +
+						"$.qr_main_label_prefix:hover{color:<<qr.label.color_hover>>;}\n" +
+						"$.qr_main_label_prefix:before{content:\"<<!escape_string:qr.label.text.quick_reply>>\";}\n" +
+						"$.qr_main_label_target{cursor:default;}\n" +
+						"$.qr_main_label_target:before{content:\"<<!escape_string:qr.target.text.left>>\";padding-right:<<qr.target.padding.inner>>px;color:<<!escape_string:qr.target.text.color>>;}\n" +
+						"$.qr_main_label_target:after{content:\"<<!escape_string:qr.target.text.right>>\";padding-left:<<qr.target.padding.inner>>px;color:<<!escape_string:qr.target.text.color>>;}\n" +
+						"$.qr_main_label_target_text{color:<<qr.target.color>>;cursor:pointer;text-decoration:none;}\n" +
+						"$.qr_main_label_target_text:hover{color:<<qr.target.color_hover>>;}\n" +
+						"$.qr_main_label_target_text:after{content:attr(target_thread);}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.close{cursor:pointer;color:<<popup.close.color>>;padding:0px <<popup.close.padding>>px 0px <<popup.close.padding>>px;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.close:hover{color:<<popup.close.color_hover>>;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.close:after{content:\"<<!escape_string:symbols.mult>>\";}\n" +
+						"$.quick_reply.persistent>$.popup_content>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_main_label>$.qr_main_label_prefix:before{content:\"<<!escape_string:qr.label.text.reply>>\";}\n" +
+						"$.quick_reply[target_thread=\"new\"]>$.popup_content>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_main_label>$.qr_main_label_prefix{display:none;}\n" +
+						"$.quick_reply[target_thread=\"current\"]>$.popup_content>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_main_label>$.qr_main_label_target{display:none;}\n" +
+						"$.quick_reply:not([target_thread=\"new\"])>$.popup_content>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_main_label>$.qr_main_label_prefix+$.qr_main_label_target{padding-left:<<qr.target.padding.outer>>px;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings{position:absolute;right:0;top:0;bottom:0;white-space:nowrap;line-height:0;padding:0px;margin:0px;z-index:1;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings.hidden{display:none;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>*{vertical-align:middle;white-space:normal;line-height:normal;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>div:nth-of-type(1){width:0px;height:100%;display:inline-block;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>$.inner{line-height:0;display:inline-block;<<css.box-sizing>>:border-box;border-right:<<popup.input.border.size>>px solid transparent;padding-right:<<popup.input.padding>>px;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>$.inner>*{vertical-align:middle;display:inline-block;line-height:normal;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>$.inner>$.file_spoiler.hidden{display:none;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>$.inner>$.file_remove{color:<<popup.input.colors.link>>;text-decoration:none;padding-left:<<qr.target.padding.inner>>px;cursor:pointer;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>$.inner>$.file_remove:hover{color:<<popup.input.colors.link_hover>>;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>$.inner>$.file_remove:after{content:\"<<!escape_string:symbols.mult>>\";}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.file_settings>$.inner>$.file{display:none;}\n" +
+						"$.qr_close{cursor:pointer;color:<<popup.close.color>>;padding:0px <<popup.close.padding>>px 0px <<popup.close.padding>>px;}\n" +
+						"$.qr_close:hover{color:<<popup.close.color_hover>>;}\n" +
+						"$.qr_close:after{content:\"<<!escape_string:symbols.mult>>\";}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings{position:absolute;right:0;top:0;bottom:0;white-space:nowrap;line-height:0;padding:0px;margin:0px;z-index:1;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings.hidden{display:none;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings>*{vertical-align:middle;white-space:normal;line-height:normal;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings>div:nth-of-type(1){width:0px;height:100%;display:inline-block;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings>$.inner{line-height:0;display:inline-block;<<css.box-sizing>>:border-box;border-right:<<popup.input.border.size>>px solid transparent;padding-right:<<popup.input.padding>>px;}\n" +
-						"$.quick_reply>$.container>$.row.top>$.cell>div$>$.saved_settings>$.inner{border-top:<<popup.input.border.size>>px solid transparent;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings>$.inner>*{vertical-align:middle;display:inline-block;line-height:normal;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings>$.inner>$.unsave{color:<<popup.input.colors.placeholder>>;text-decoration:none;padding-left:<<qr.target.padding.inner>>px;cursor:pointer;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings>$.inner>$.unsave:hover{color:<<popup.input.colors.link_hover>>;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.saved_settings>$.inner>$.unsave:after{content:\"<<!escape_string:symbols.mult>>\";}\n" +
+						"$.qr_file_settings{position:absolute;right:0;top:0;bottom:0;white-space:nowrap;line-height:0;padding:0px;margin:0px;z-index:1;}\n" +
+						"$.qr_file_settings.hidden{display:none;}\n" +
+						"$.qr_file_settings_inner," +
+						"$.qr_file_settings_v_aligner{vertical-align:middle;white-space:normal;line-height:normal;}\n" +
+						"$.qr_file_settings_v_aligner{width:0px;height:100%;display:inline-block;}\n" +
+						"$.qr_file_settings_inner{line-height:0;display:inline-block;<<css.box-sizing>>:border-box;border-right:<<popup.input.border.size>>px solid transparent;padding-right:<<popup.input.padding>>px;}\n" +
+						"$.qr_file_settings_item{vertical-align:middle;display:inline-block;line-height:normal;}\n" +
+						"$.qr_file_spoiler.hidden{display:none;}\n" +
+						"$.qr_file_remove{color:<<popup.input.colors.link>>;text-decoration:none;padding-left:<<qr.target.padding.inner>>px;cursor:pointer;}\n" +
+						"$.qr_file_remove:hover{color:<<popup.input.colors.link_hover>>;}\n" +
+						"$.qr_file_remove:after{content:\"<<!escape_string:symbols.mult>>\";}\n" +
+						"$.qr_file{display:none;}\n" +
 
-						"$.quick_reply>$.container>$.status{display:block;}\n" +
-						"$.quick_reply>$.container>$.status.hidden{display:none;}\n" +
-						"$.quick_reply>$.container>$.status>div${padding:<<qr.status.padding.top>>px 0px <<qr.status.padding.bottom>>px 0px;}\n" +
-						"$.quick_reply>$.container>$.status>div$>div$:nth-of-type(1){white-space:nowrap;color:<<qr.status.text_color>>;<<!font:qr.status.font>>}\n" +
-						"$.quick_reply>$.container>$.status>div$>div$>$.attempt{padding-left:<<qr.status.spacing>>px;}\n" +
-						"$.quick_reply>$.container>$.status>div$>div$>$.attempt.hidden{display:none;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar{height:<<qr.status.bar_height>>px;width:100%;display:block;position:relative;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar.default{background-color:<<qr.status.default.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar.parse{background-color:<<qr.status.parse.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar.upload{background-color:<<qr.status.upload.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar.cooldown{background-color:<<qr.status.cooldown.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar.download{background-color:<<qr.status.download.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar.context_acquire{background-color:<<qr.status.context_acquire.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar>$.inner{position:absolute;left:0;width:0px;bottom:0;top:0;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar>$.inner.parse{background-color:<<qr.status.parse.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar>$.inner.upload{background-color:<<qr.status.upload.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar>$.inner.cooldown{background-color:<<qr.status.cooldown.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar>$.inner.download{background-color:<<qr.status.download.color>>;}\n" +
-						"$.quick_reply>$.container>$.status>div$>$.progress.bar>$.inner.context_acquire{background-color:<<qr.status.context_acquire.color>>;}\n" +
+						"$.qr_saved_settings{position:absolute;right:0;top:0;bottom:0;white-space:nowrap;line-height:0;padding:0px;margin:0px;z-index:1;}\n" +
+						"$.qr_saved_settings.hidden{display:none;}\n" +
+						"$.qr_saved_settings_inner," +
+						"$.qr_saved_settings_v_aligner{vertical-align:middle;white-space:normal;line-height:normal;}\n" +
+						"$.qr_saved_settings_v_aligner{width:0px;height:100%;display:inline-block;}\n" +
+						"$.qr_saved_settings_inner{line-height:0;display:inline-block;<<css.box-sizing>>:border-box;border-right:<<popup.input.border.size>>px solid transparent;padding-right:<<popup.input.padding>>px;}\n" +
+						"$.qr_saved_settings_unsave{vertical-align:middle;display:inline-block;line-height:normal;}\n" +
+						"$.qr_saved_settings_unsave{color:<<popup.input.colors.placeholder>>;text-decoration:none;padding-left:<<qr.target.padding.inner>>px;cursor:pointer;}\n" +
+						"$.qr_saved_settings_unsave:hover{color:<<popup.input.colors.link_hover>>;}\n" +
+						"$.qr_saved_settings_unsave:after{content:\"<<!escape_string:symbols.mult>>\";}\n" +
+						"$.qr_row.top>$.qr_cell>$.qr_cell_inner>$.qr_saved_settings>$.qr_saved_settings_inner{border-top:<<popup.input.border.size>>px solid transparent;}\n" +
 
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.b.cooldown.container{overflow:hidden;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.b.cooldown.container>$.cooldown{position:absolute;left:0;top:0;bottom:0;right:0;opacity:<<qr.cooldown.opacity>>;<<css.transition>>:opacity 0s;background-color:<<qr.cooldown.colors.bg>>;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.b.cooldown.container>$.cooldown.ready{opacity:0;<<css.transition>>:opacity <<qr.cooldown.transition.time>>s <<qr.cooldown.transition.method>> <<qr.cooldown.transition.delay>>s;}\n" +
-						"$.quick_reply>$.container>$.row>$.cell>div$>$.b.cooldown.container>$.cooldown>$.inner{position:absolute;left:0;top:0;bottom:0;width:0%;background-color:<<qr.cooldown.colors.bar>>;}\n" +
+						"$.qr_status{display:block;}\n" +
+						"$.qr_status.hidden{display:none;}\n" +
+						"$.qr_status_inner{padding:<<qr.status.padding.top>>px 0px <<qr.status.padding.bottom>>px 0px;}\n" +
+						"$.qr_status_text{white-space:nowrap;color:<<qr.status.text_color>>;<<!font:qr.status.font>>}\n" +
+						"$.qr_status_attempt{padding-left:<<qr.status.spacing>>px;}\n" +
+						"$.qr_status_attempt.hidden{display:none;}\n" +
+						"$.qr_progress{height:<<qr.status.bar_height>>px;width:100%;display:block;position:relative;}\n" +
+						"$.qr_progress.default{background-color:<<qr.status.default.color>>;}\n" +
+						"$.qr_progress.parse{background-color:<<qr.status.parse.color>>;}\n" +
+						"$.qr_progress.upload{background-color:<<qr.status.upload.color>>;}\n" +
+						"$.qr_progress.cooldown{background-color:<<qr.status.cooldown.color>>;}\n" +
+						"$.qr_progress.download{background-color:<<qr.status.download.color>>;}\n" +
+						"$.qr_progress.context_acquire{background-color:<<qr.status.context_acquire.color>>;}\n" +
+						"$.qr_progress_inner{position:absolute;left:0;width:0px;bottom:0;top:0;}\n" +
+						"$.qr_progress_inner.parse{background-color:<<qr.status.parse.color>>;}\n" +
+						"$.qr_progress_inner.upload{background-color:<<qr.status.upload.color>>;}\n" +
+						"$.qr_progress_inner.cooldown{background-color:<<qr.status.cooldown.color>>;}\n" +
+						"$.qr_progress_inner.download{background-color:<<qr.status.download.color>>;}\n" +
+						"$.qr_progress_inner.context_acquire{background-color:<<qr.status.context_acquire.color>>;}\n" +
+
+						"$.qr_cooldown_container{overflow:hidden;}\n" +
+						"$.qr_cooldown{position:absolute;left:0;top:0;bottom:0;right:0;opacity:<<qr.cooldown.opacity>>;<<css.transition>>:opacity 0s;background-color:<<qr.cooldown.colors.bg>>;}\n" +
+						"$.qr_cooldown.ready{opacity:0;<<css.transition>>:opacity <<qr.cooldown.transition.time>>s <<qr.cooldown.transition.method>> <<qr.cooldown.transition.delay>>s;}\n" +
+						"$.qr_cooldown_inner{position:absolute;left:0;top:0;bottom:0;width:0%;background-color:<<qr.cooldown.colors.bar>>;}\n" +
 						//}
 
 						//{ Messenger
-						"$.messenger{position:fixed;left:50%;top:0;width:<<messages.size.width>>px;}\n" +
-						"$.messenger>$.message{position:absolute;z-index:160;left:-50%;width:100%;padding:<<messages.padding.top>>px <<messages.padding.right>>px <<messages.padding.bottom>>px <<messages.padding.left>>px;<<css.box-sizing>>:border-box;}\n" +
+						"$.message_container{position:fixed;left:50%;top:0;width:<<messages.size.width>>px;}\n" +
+						"$.message{position:absolute;z-index:160;left:-50%;width:100%;padding:<<messages.padding.top>>px <<messages.padding.right>>px <<messages.padding.bottom>>px <<messages.padding.left>>px;<<css.box-sizing>>:border-box;}\n" +
 
-						"$.messenger>$.message>$.background{position:absolute;left:0;top:0;bottom:0;right:0;opacity:<<messages.bg.opacity>>;box-shadow:<<!shadow:messages.bg.shadow>>;<<css.border-radius>>:<<messages.border.radius>>px;}\n" +
-						"$.messenger>$.message.plain>$.background{background-color:<<messages.colors.plain.bg>>;}\n" +
-						"$.messenger>$.message.error>$.background{background-color:<<messages.colors.error.bg>>;}\n" +
-						"$.messenger>$.message.parse>$.background{background-color:<<messages.colors.parse.bg>>;}\n" +
-						"$.messenger>$.message.okay>$.background{background-color:<<messages.colors.okay.bg>>;}\n" +
-						"$.messenger>$.message.good>$.background{background-color:<<messages.colors.good.bg>>;}\n" +
-						"$.messenger>$.message.info>$.background{background-color:<<messages.colors.info.bg>>;}\n" +
+						"$.message>$.message_background{position:absolute;left:0;top:0;bottom:0;right:0;opacity:<<messages.bg.opacity>>;box-shadow:<<!shadow:messages.bg.shadow>>;<<css.border-radius>>:<<messages.border.radius>>px;}\n" +
+						"$.message.plain>$.message_background{background-color:<<messages.colors.plain.bg>>;}\n" +
+						"$.message.error>$.message_background{background-color:<<messages.colors.error.bg>>;}\n" +
+						"$.message.parse>$.message_background{background-color:<<messages.colors.parse.bg>>;}\n" +
+						"$.message.okay>$.message_background{background-color:<<messages.colors.okay.bg>>;}\n" +
+						"$.message.good>$.message_background{background-color:<<messages.colors.good.bg>>;}\n" +
+						"$.message.info>$.message_background{background-color:<<messages.colors.info.bg>>;}\n" +
 
-						"$.messenger>$.message.minimized>$.background{opacity:<<messages.bg.opacity>>;box-shadow:<<!shadow:messages.bg.shadow_min>>;}\n" +
-						"$.messenger>$.message.minimized{left:50%;margin-left:8px;width:auto;}\n" +
-						"$.messenger>$.message.minimized>$.inner>$:not(.buttons){display:none;}\n" +
-						"$.messenger>$.message.minimized>$.inner>$.buttons{position:relative;}\n" +
+						"$.message.minimized>$.message_background{opacity:<<messages.bg.opacity>>;box-shadow:<<!shadow:messages.bg.shadow_min>>;}\n" +
+						"$.message.minimized{left:50%;margin-left:8px;width:auto;}\n" +
+						"$.message.minimized>$.message_inner>$:not(.message_buttons){display:none;}\n" +
+						"$.message.minimized>$.message_inner>$.message_buttons{position:relative;}\n" +
 
-						"$.messenger>$.message.plain{color:<<messages.colors.plain.text>>;}\n" +
-						"$.messenger>$.message.error{color:<<messages.colors.error.text>>;}\n" +
-						"$.messenger>$.message.parse{color:<<messages.colors.parse.text>>;}\n" +
-						"$.messenger>$.message.okay{color:<<messages.colors.okay.text>>;}\n" +
-						"$.messenger>$.message.good{color:<<messages.colors.good.text>>;}\n" +
-						"$.messenger>$.message.info{color:<<messages.colors.info.text>>;}\n" +
-						"$.messenger>$.message>$.inner{position:relative;width:100%;}\n" +
-						"$.messenger>$.message>$.inner>$.message_title{padding-bottom:<<messages.title.separation>>px;<<!font:messages.title.font>>}\n" +
+						"$.message.plain{color:<<messages.colors.plain.text>>;}\n" +
+						"$.message.error{color:<<messages.colors.error.text>>;}\n" +
+						"$.message.parse{color:<<messages.colors.parse.text>>;}\n" +
+						"$.message.okay{color:<<messages.colors.okay.text>>;}\n" +
+						"$.message.good{color:<<messages.colors.good.text>>;}\n" +
+						"$.message.info{color:<<messages.colors.info.text>>;}\n" +
+						"$.message_inner{position:relative;width:100%;}\n" +
+						"$.message_title{padding-bottom:<<messages.title.separation>>px;<<!font:messages.title.font>>}\n" +
 
-						"$.messenger>$.message>$.inner>$.buttons{position:absolute;right:0;top:0;text-align:right;line-height:100%;}\n" +
-						"$.messenger>$.message>$.inner>$.buttons>$.close," +
-						"$.messenger>$.message>$.inner>$.buttons>$.minimize{display:block;text-decoration:none;cursor:pointer;z-index:1;position:relative;}\n" +
-						"$.messenger>$.message>$.inner>$.buttons>$.close:after{content:\"<<!escape_string:symbols.mult>>\";}\n" +
-						"$.messenger>$.message>$.inner>$.buttons>$.minimize:after{content:\"<<!escape_string:symbols.minus>>\";}\n" +
-						"$.messenger>$.message>$.inner>$.buttons>$.timer{display:block;opacity:<<messages.timer.opacity>>;position:relative;top:-0.5em;cursor:default;<<!font:messages.timer.font>>}\n" +
+						"$.message_buttons{position:absolute;right:0;top:0;text-align:right;line-height:100%;}\n" +
+						"$.message_button{display:block;text-decoration:none;cursor:pointer;z-index:1;position:relative;}\n" +
+						"$.message_button.close:after{content:\"<<!escape_string:symbols.mult>>\";}\n" +
+						"$.message_button.minimize:after{content:\"<<!escape_string:symbols.minus>>\";}\n" +
+						"$.message_timer{display:block;opacity:<<messages.timer.opacity>>;position:relative;top:-0.5em;cursor:default;<<!font:messages.timer.font>>}\n" +
 
-						"$.messenger>$.message>$.inner>$.body{<<!font:messages.body.font>>}\n" +
+						"$.message_body{<<!font:messages.body.font>>}\n" +
 
-						"$.messenger>$.message.plain>$.inner $.shadow," +
-						"$.messenger>$.message.plain>$.inner $.hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.plain.title_shadow>>;}\n" +
-						"$.messenger>$.message.error>$.inner $.shadow," +
-						"$.messenger>$.message.error>$.inner $.hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.error.title_shadow>>;}\n" +
-						"$.messenger>$.message.parse>$.inner $.shadow," +
-						"$.messenger>$.message.parse>$.inner $.hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.parse.title_shadow>>;}\n" +
-						"$.messenger>$.message.okay>$.inner $.shadow," +
-						"$.messenger>$.message.okay>$.inner $.hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.okay.title_shadow>>;}\n" +
-						"$.messenger>$.message.good>$.inner $.shadow," +
-						"$.messenger>$.message.good>$.inner $.hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.good.title_shadow>>;}\n" +
-						"$.messenger>$.message.info>$.inner $.shadow," +
-						"$.messenger>$.message.info>$.inner $.hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.info.title_shadow>>;}\n" +
+						"$.message.plain>$.message_inner $.message_shadow," +
+						"$.message.plain>$.message_inner $.message_hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.plain.title_shadow>>;}\n" +
+						"$.message.error>$.message_inner $.message_shadow," +
+						"$.message.error>$.message_inner $.message_hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.error.title_shadow>>;}\n" +
+						"$.message.parse>$.message_inner $.message_shadow," +
+						"$.message.parse>$.message_inner $.message_hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.parse.title_shadow>>;}\n" +
+						"$.message.okay>$.message_inner $.message_shadow," +
+						"$.message.okay>$.message_inner $.message_hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.okay.title_shadow>>;}\n" +
+						"$.message.good>$.message_inner $.message_shadow," +
+						"$.message.good>$.message_inner $.message_hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.good.title_shadow>>;}\n" +
+						"$.message.info>$.message_inner $.message_shadow," +
+						"$.message.info>$.message_inner $.message_hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.info.title_shadow>>;}\n" +
 
-						"$.messenger>$.message $.message_link{<<!font:messages.link.font>>}\n" +
-						"$.messenger>$.message.plain $.message_link{color:<<messages.colors.plain.link>>;}\n" +
-						"$.messenger>$.message.plain $.message_link:hover{color:<<messages.colors.plain.link_hover>>;}\n" +
-						"$.messenger>$.message.error $.message_link{color:<<messages.colors.error.link>>;}\n" +
-						"$.messenger>$.message.error $.message_link:hover{color:<<messages.colors.error.link_hover>>;}\n" +
-						"$.messenger>$.message.parse $.message_link{color:<<messages.colors.parse.link>>;}\n" +
-						"$.messenger>$.message.parse $.message_link:hover{color:<<messages.colors.parse.link_hover>>;}\n" +
-						"$.messenger>$.message.okay $.message_link{color:<<messages.colors.okay.link>>;}\n" +
-						"$.messenger>$.message.okay $.message_link:hover{color:<<messages.colors.okay.link_hover>>;}\n" +
-						"$.messenger>$.message.good $.message_link{color:<<messages.colors.good.link>>;}\n" +
-						"$.messenger>$.message.good $.message_link:hover{color:<<messages.colors.good.link_hover>>;}\n" +
-						"$.messenger>$.message.info $.message_link{color:<<messages.colors.info.link>>;}\n" +
-						"$.messenger>$.message.info $.message_link:hover{color:<<messages.colors.info.link_hover>>;}\n" +
+						"$.message_link{<<!font:messages.link.font>>}\n" +
+						"$.message.plain $.message_link{color:<<messages.colors.plain.link>>;}\n" +
+						"$.message.plain $.message_link:hover{color:<<messages.colors.plain.link_hover>>;}\n" +
+						"$.message.error $.message_link{color:<<messages.colors.error.link>>;}\n" +
+						"$.message.error $.message_link:hover{color:<<messages.colors.error.link_hover>>;}\n" +
+						"$.message.parse $.message_link{color:<<messages.colors.parse.link>>;}\n" +
+						"$.message.parse $.message_link:hover{color:<<messages.colors.parse.link_hover>>;}\n" +
+						"$.message.okay $.message_link{color:<<messages.colors.okay.link>>;}\n" +
+						"$.message.okay $.message_link:hover{color:<<messages.colors.okay.link_hover>>;}\n" +
+						"$.message.good $.message_link{color:<<messages.colors.good.link>>;}\n" +
+						"$.message.good $.message_link:hover{color:<<messages.colors.good.link_hover>>;}\n" +
+						"$.message.info $.message_link{color:<<messages.colors.info.link>>;}\n" +
+						"$.message.info $.message_link:hover{color:<<messages.colors.info.link_hover>>;}\n" +
 
 						//}
 
 						//{ Messenger custom
-						"$.message_progress_bar{height:<<messages.progress_bar.height>>px;margin-top:<<messages.progress_bar.separation>>px;position:relative;display:block;width:100%;}\n" +
-						"$.message_progress_bar.hidden{display:none;}\n" +
-						"$.message_progress_bar.default{background-color:<<messages.progress_bar.colors.default>>;}\n" +
-						"$.message_progress_bar.active{background-color:<<messages.progress_bar.colors.active>>;}\n" +
-						"$.message_progress_bar_inner{position:absolute;left:0;top:0;bottom:0;width:0%;}\n" +
-						"$.message_progress_bar_inner.active{background-color:<<messages.progress_bar.colors.active>>;}\n" +
-						//}
-
-						//{ Footer
-						"body$>$.footer{display:block;height:<<footer.size>>px;}\n" +
+						"$.message_progress{height:<<messages.progress_bar.height>>px;margin-top:<<messages.progress_bar.separation>>px;position:relative;display:block;width:100%;}\n" +
+						"$.message_progress.hidden{display:none;}\n" +
+						"$.message_progress.default{background-color:<<messages.progress_bar.colors.default>>;}\n" +
+						"$.message_progress.active{background-color:<<messages.progress_bar.colors.active>>;}\n" +
+						"$.message_progress_inner{position:absolute;left:0;top:0;bottom:0;width:0%;}\n" +
+						"$.message_progress_inner.active{background-color:<<messages.progress_bar.colors.active>>;}\n" +
 						//}
 
 						//{ Banner
 						"$.board_info{text-align:center;padding-bottom:<<board_info.padding.bottom>>px;}\n" +
-						"$.board_info>$.banner.container{background:transparent;padding-bottom:<<board_info.banner.padding.bottom>>px;}\n" +
-						"$.board_info>$.banner.container.error{display:none;}\n" +
-						"$.board_info>$.banner.container>$.banner{width:<<board_info.banner.size.width>>px;<<board_info.banner.size.height>>:100px;}\n" +
-						"$.board_info>$.title{color:<<board_info.title.color>>;<<!font:board_info.title.font>>}\n" +
-						"$.board_info>$.subtitle{color:<<board_info.subtitle.color>>;<<!font:board_info.subtitle.font>>}\n" +
+						"$.board_banner_container{background:transparent;padding-bottom:<<board_info.banner.padding.bottom>>px;}\n" +
+						"$.board_banner_container.error{display:none;}\n" +
+						"$.board_banner{width:<<board_info.banner.size.width>>px;<<board_info.banner.size.height>>:100px;}\n" +
+						"$.board_info_title{color:<<board_info.title.color>>;<<!font:board_info.title.font>>}\n" +
+						"$.board_info_subtitle{color:<<board_info.subtitle.color>>;<<!font:board_info.subtitle.font>>}\n" +
 						//}
 
 						//{ Updater
 						"$.updater{position:fixed;color:<<updater.colors.text>>;z-index:110;}\n" +
-						"$.updater>$.small{position:relative;padding:<<updater.small.padding>>px;}\n" +
-						"$.updater>$.small:before{content:\"<<!escape_string:updater.small.endings.start>>\";color:<<updater.small.endings.color>>;padding-right:<<updater.small.endings.spacing>>px;}\n" +
-						"$.updater>$.small:after{content:\"<<!escape_string:updater.small.endings.end>>\";color:<<updater.small.endings.color>>;padding-left:<<updater.small.endings.spacing>>px;}\n" +
-						"$.updater>$.small>$*{vertical-align:middle;}\n" +
-						"$.updater>$.small $.hidden{display:none;}\n" +
-						"$.updater>$.small>$.difference>$.added>span$:before{content:\"<<!escape_string:updater.symbols.added>>\";}\n" +
-						"$.updater>$.small>$.difference>$.removed>span$:before{content:\"<<!escape_string:updater.symbols.removed>>\";}\n" +
-						"$.updater>$.small $.counts>span$>$.posts:not(.hidden)+$.images:not(.hidden):before{content:\"<<!escape_string:updater.symbols.separators.post_image>>\";}\n" +
-						"$.updater>$.small $.total.counts>span$>$.posts+$.images:not(.hidden):before{color:<<updater.colors.text>>;}\n" +
-						"$.updater>$.small $.counts>span$>$.posts:after{content:\"<<!escape_string:updater.symbols.post>>\";}\n" +
-						"$.updater>$.small $.counts>span$>$.images:after{content:\"<<!escape_string:updater.symbols.image>>\";}\n" +
-						"$.updater>$.small>$.enabled:not(.hidden)+$.difference:not(.right)," +
-						"$.updater>$.small>$.difference:not(.right):not(.hidden)+$.countdown," +
-						"$.updater>$.small>$.enabled:not(.hidden)+$.difference:not(.right).hidden+$.countdown," +
-						"$.updater>$.small>$.enabled:not(.hidden)+$.difference.right+$.countdown," +
-						"$.updater>$.small>$.difference.right," +
-						"$.updater>$.small>$.total{margin-left:<<updater.small.spacing>>px;}\n" +
+						"$.updater_small{position:relative;padding:<<updater.small.padding>>px;}\n" +
+						"$.updater_small:before{content:\"<<!escape_string:updater.small.endings.start>>\";color:<<updater.small.endings.color>>;padding-right:<<updater.small.endings.spacing>>px;}\n" +
+						"$.updater_small:after{content:\"<<!escape_string:updater.small.endings.end>>\";color:<<updater.small.endings.color>>;padding-left:<<updater.small.endings.spacing>>px;}\n" +
+						"$.updater_small_item{vertical-align:middle;}\n" +
 
-						"$.updater>$.small>$.total{cursor:move;}\n" +
+						"$.updater_counts.hidden," +
+						"$.updater_counts_posts.hidden," +
+						"$.updater_counts_images.hidden," +
+						"$.updater_difference.hidden," +
+						"$.updater_small>$.checkbox.hidden," +
+						"$.updater_difference_removed.hidden{display:none;}\n" +
 
-						"$.updater>$.small>$.difference.right{float:right;}\n" +
-						"$.updater>$.small>$.difference>$.added{color:<<updater.colors.added>>;}\n" +
-						"$.updater>$.small>$.difference>$.removed{color:<<updater.colors.removed>>;}\n" +
-						"$.updater>$.small>$.difference>$.added:not(.hidden)+$.removed:not(.hidden):before{content:\"<<!escape_string:updater.symbols.separators.added_removed>>\";color:<<updater.colors.text>>;}\n" +
+						"$.updater_counts_posts:not(.hidden)+$.updater_counts_images:not(.hidden):before{content:\"<<!escape_string:updater.symbols.separators.post_image>>\";}\n" +
+						"$.updater_counts_posts:after{content:\"<<!escape_string:updater.symbols.post>>\";}\n" +
+						"$.updater_counts_images:after{content:\"<<!escape_string:updater.symbols.image>>\";}\n" +
+						"$.updater_counts_posts.limit," +
+						"$.updater_counts_images.limit{color:<<updater.colors.limit>>;}\n" +
+						"$.updater_counts.updater_totals>$.updater_counts_inner>$.posts+$.images:not(.hidden):before{color:<<updater.colors.text>>;}\n" +
 
-						"$.updater>$.small $.counts>span$>$.limit{color:<<updater.colors.limit>>;}\n" +
+						"$.updater_small>$.checkbox.enabled:not(.hidden)+$.updater_difference:not(.right)," +
+						"$.updater_small>$.updater_difference:not(.right):not(.hidden)+$.updater_countdown," +
+						"$.updater_small>$.checkbox.enabled:not(.hidden)+$.updater_difference:not(.right).hidden+$.updater_countdown," +
+						"$.updater_small>$.checkbox.enabled:not(.hidden)+$.updater_difference.right+$.updater_countdown," +
+						"$.updater_small>$.updater_difference.right," +
+						"$.updater_small>$.updater_totals{margin-left:<<updater.small.spacing>>px;}\n" +
 
-						"$.updater>$.small>$.countdown{color:<<updater.colors.link>>;cursor:pointer;text-decoration:none;display:inline-block;position:relative;}\n" +
-						"$.updater>$.small>$.countdown:hover{color:<<updater.colors.link_hover>>;}\n" +
-						"$.updater>$.small>$.countdown.counting>span$:after{content:\"<<!escape_string:updater.symbols.countdown>>\";}\n" +
-						"$.updater>$.small>$.countdown>$.progress.bar{position:absolute;left:0px;top:0;right:0px;bottom:0;opacity:<<updater.small.progress.opacity>>;}\n" +
-						"$.updater>$.small>$.countdown:not(.loading)>$.progress.bar{display:none;}\n" +
-						"$.updater>$.small>$.countdown>$.progress.bar.ajax{background-color:<<updater.small.progress.colors.ajax>>;}\n" +
-						"$.updater>$.small>$.countdown>$.progress.bar.parse{background-color:<<updater.small.progress.colors.parse>>;}\n" +
-						"$.updater>$.small>$.countdown>$.progress.bar>$.inner{position:absolute;left:0;top:0;width:0px;bottom:0;}\n" +
-						"$.updater>$.small>$.countdown>$.progress.bar>$.inner.ajax{background-color:<<updater.small.progress.colors.ajax>>;}\n" +
-						"$.updater>$.small>$.countdown>$.progress.bar>$.inner.parse{background-color:<<updater.small.progress.colors.parse>>;}\n" +
+						"$.updater_small>$.updater_totals{cursor:move;}\n" +
 
-						"$.updater>$.background{position:absolute;left:0;top:0;bottom:0;right:0;background-color:<<updater.bg.color>>;opacity:<<updater.bg.opacity>>;box-shadow:<<!shadow:updater.bg.shadow>>;<<css.border-radius>>:<<updater.bg.radius>>px;}\n" +
+						"$.updater_difference.right{float:right;}\n" +
+
+						"$.updater_difference_added>$.updater_counts_inner:before{content:\"<<!escape_string:updater.symbols.added>>\";}\n" +
+						"$.updater_difference_removed>$.updater_counts_inner:before{content:\"<<!escape_string:updater.symbols.removed>>\";}\n" +
+						"$.updater_difference_added{color:<<updater.colors.added>>;}\n" +
+						"$.updater_difference_removed{color:<<updater.colors.removed>>;}\n" +
+						"$.updater_difference_added:not(.hidden)+$.updater_difference_removed:not(.hidden):before{content:\"<<!escape_string:updater.symbols.separators.added_removed>>\";color:<<updater.colors.text>>;}\n" +
+
+						"$.updater_countdown{color:<<updater.colors.link>>;cursor:pointer;text-decoration:none;display:inline-block;position:relative;}\n" +
+						"$.updater_countdown:hover{color:<<updater.colors.link_hover>>;}\n" +
+						"$.updater_countdown.counting>$.updater_countdown_suffix:after{content:\"<<!escape_string:updater.symbols.countdown>>\";}\n" +
+
+						"$.updater_countdown:not(.loading)>$.updater_progress{display:none;}\n" +
+						"$.updater_progress{position:absolute;left:0px;top:0;right:0px;bottom:0;opacity:<<updater.small.progress.opacity>>;}\n" +
+						"$.updater_progress.ajax{background-color:<<updater.small.progress.colors.ajax>>;}\n" +
+						"$.updater_progress.parse{background-color:<<updater.small.progress.colors.parse>>;}\n" +
+						"$.updater_progress_inner{position:absolute;left:0;top:0;width:0px;bottom:0;}\n" +
+						"$.updater_progress_inner.ajax{background-color:<<updater.small.progress.colors.ajax>>;}\n" +
+						"$.updater_progress_inner.parse{background-color:<<updater.small.progress.colors.parse>>;}\n" +
+
+						"$.updater_background{position:absolute;left:0;top:0;bottom:0;right:0;background-color:<<updater.bg.color>>;opacity:<<updater.bg.opacity>>;box-shadow:<<!shadow:updater.bg.shadow>>;<<css.border-radius>>:<<updater.bg.radius>>px;}\n" +
 
 						"$.updater.embedded{position:relative;z-index:auto;}\n" +
-						"$.updater.embedded>$.small{padding:0px;}\n" +
-						"$.updater.embedded>$.background{display:none;}\n" +
-						"$.updater.embedded>$.small>$*{vertical-align:baseline;}\n" +
-						"$.updater.embedded>$.small>$.checkbox{vertical-align:middle;}\n" +
-
+						"$.updater.embedded>$.updater_background{display:none;}\n" +
+						"$.updater.embedded>$.updater_small{padding:0px;}\n" +
+						"$.updater.embedded>$.updater_small>$.updater_small_item{vertical-align:baseline;}\n" +
+						"$.updater.embedded>$.updater_small>$.updater_small_item.checkbox{vertical-align:middle;}\n" +
 						//}
 
 						//{ Overwrite styles
@@ -14518,7 +15318,8 @@ var xch = (function () {
 
 						""
 						/*!stylesheet-end!*/
-					)))
+						/*!stylesheet-pre-parse!*/)
+					))
 				); //}
 
 				// Stylize
@@ -14676,17 +15477,35 @@ var xch = (function () {
 					return $(document.createTextNode(text));
 				},
 
+				add_class: function (obj) {
+					obj.addClass(this.cls);
+					return obj;
+				},
 				set_class: function (obj) {
-					if (arguments.length <= 1) {
-						obj[0].className = this.cls;
+					if (obj.length == 1) {
+						if (arguments.length <= 1) {
+							obj[0].className = this.cls;
+						}
+						else {
+							var new_class = this.cls;
+							for (var i = 1; i < arguments.length; ++i) {
+								new_class += " ";
+								new_class += arguments[i];
+							}
+							obj[0].className = new_class;
+						}
 					}
 					else {
-						var tag = this.cls;
-						for (var i = 1; i < arguments.length; ++i) {
-							tag += " ";
-							tag += arguments[i];
+						var new_class = this.cls;
+						if (arguments.length > 1) {
+							for (var i = 1; i < arguments.length; ++i) {
+								new_class += " ";
+								new_class += arguments[i];
+							}
 						}
-						obj[0].className = tag;
+						for (var i = 0; i < obj.length; ++i) {
+							obj[i].className = new_class;
+						}
 					}
 
 					return obj;
@@ -14780,7 +15599,7 @@ var xch = (function () {
 					else obj.attr("to_target", to_target);
 				},
 
-				create_checkbox: function (checked, size) {
+				checkbox: function (checked, size) {
 					var s;
 					if (!(size in this.checkbox_settings.sizes)) {
 						size = "normal";
@@ -14791,8 +15610,8 @@ var xch = (function () {
 
 					return $(
 						'<label class="' + this.cls + ' ' + size + ' checkbox">' +
-						'<input type="checkbox"' + (checked ? ' checked="checked"' : '') + ' />' +
-						'<svg xmlns="http://www.w3.org/2000/svg" version="1.1">' +
+						'<input class="' + this.cls + ' checkbox_input" type="checkbox"' + (checked ? ' checked="checked"' : '') + ' />' +
+						'<svg class="' + this.cls + ' checkbox_svg" xmlns="http://www.w3.org/2000/svg" version="1.1">' +
 						'<g transform="scale(' + sz + ',' + sz + ')">' +
 						'<polygon points="0.75,0.0625 0.9375,0.1875 0.5,0.9375 0.3125,0.9375 0.0625,0.6875 0.1875,0.5 0.375,0.6875"></polygon>' +
 						'</g>' +
