@@ -91,6 +91,11 @@ var CSS = (function () {
 	return CSS;
 
 })();
+var elem = function (tag) {
+	var e = document.createElement(tag);
+	if (arguments.length > 1) e.className = arguments[1];
+	return $(e);
+};
 
 
 // Location management
@@ -177,7 +182,7 @@ var Location = (function () {
 			this.hash.path = h.split("?")[0];
 			this.hash.tree = (this.hash.path.length == 0 ? [] : this.hash.path.split("/"));
 			if (this.hash.path.length + 1 < h.length) {
-				this.hash.vars = this.hash.parse_vars.call(this.hash, h.substr(this.hash.path.length + 1, h.length - (this.hash.path.length + 1)));
+				this.hash.vars = this.parse_vars.call(this.hash, h.substr(this.hash.path.length + 1, h.length - (this.hash.path.length + 1)));
 			}
 			else {
 				this.hash.vars = {};
@@ -248,7 +253,7 @@ var Location = (function () {
 				if (h[i].length == 0) continue;
 
 				var p = h[i].split("=");
-				vars[p[0]] = (p.length == 1 ? null : location.unescape(p.splice(1, p.length - 1).join("=")));
+				vars[p[0]] = (p.length == 1 ? null : Location.prototype.unescape(p.splice(1, p.length - 1).join("=")));
 			}
 
 			return vars;
@@ -385,6 +390,115 @@ var on_nav_link_click = function (event) {
 };
 
 
+// Acquire changelog
+var acquire_changelog = (function () {
+
+	var checked = false;
+
+	return function () {
+		if (checked) return;
+
+		$.ajax({
+			type: "GET",
+			url: "https://api.github.com/repos/dnsev/xch/commits",
+			dataType: "json",
+			cache: "true",
+			success: function (data, status, jq_xhr) {
+				checked = true;
+
+				var changelog = parse_changelog(data);
+				display_changelog(changelog);
+			},
+			error: function (jq_xhr, status) {
+				checked = true;
+
+				$(".changelog")
+				.addClass("error")
+					.find(".changelog_status")
+					.attr("error_message", "Status: " + jq_xhr.status + " / " + status);
+			}
+		});
+	};
+
+})();
+var title_is_relevant = function (title) {
+	return /[0-9\.]/.test(title);
+};
+var parse_changelog = function (gcl) {
+	var changelog = [];
+
+	for (var i = 0; i < gcl.length; ++i) {
+		var title = gcl[i].commit.message.replace(/\s*\n\s*(0|[^0])*$/, "");
+
+		if (title_is_relevant(title)) {
+			var entry = {
+				sha: gcl[i].sha,
+				title: title,
+				comment: gcl[i].commit.message.replace(/^[^\r\n]*\r?\n?\r?\n?/, ""),
+				timestamp: 0,
+			};
+
+			var date = /^([0-9]+)-([0-9]+)-([0-9]+)T([0-9]+):([0-9]+):([0-9]+)Z$/.exec(gcl[i].commit.committer.date);
+			if (date) {
+				entry.timestamp = (new Date(
+					parseInt(date[1]),
+					parseInt(date[2]) - 1,
+					parseInt(date[3]),
+					parseInt(date[4]),
+					parseInt(date[5]),
+					parseInt(date[6])
+				)).getTime();
+			}
+
+			changelog.push(entry);
+		}
+	}
+
+	return changelog;
+};
+var display_changelog = function (changelog) {
+	var timezone_offset = -(new Date()).getTimezoneOffset() * 60 * 1000;
+
+	var container = $(".changelog");
+	container.html("").addClass("loaded");
+
+	for (var i = 0; i < changelog.length; ++i) {
+		var item = elem("div", "changelog_item");
+		var title = elem("div", "changelog_item_title");
+		var content = elem("ul", "changelog_item_content");
+
+		// Title
+		title.html(
+			elem("a", "changelog_item_title_link")
+			.text(changelog[i].title)
+			.attr("target", "_blank")
+			.attr("href", "https://github.com/dnsev/xch/commit/" + changelog[i].sha)
+		);
+
+		// Changes list
+		var changes = changelog[i].comment.split("\n");
+		// Fix back into a single line if necessary
+		for (var j = 0; j < changes.length; ++j) {
+			if (/^[a-z]/.test(changes[j]) && j > 0) {
+				changes[j - 1] = changes[j - 1].trim() + " " + changes[j].trim();
+				changes.splice(j, 1);
+				--j;
+			}
+		}
+		// Add change
+		for (var j = 0; j < changes.length; ++j) {
+			content.append(
+				elem("li", "changelog_item_change")
+				.text(changes[j].trim())
+			);
+		}
+
+		// Add
+		container.append(item.append(title).append(content));
+	}
+};
+
+
 // Objects
 var css = null;
 var loc = null;
@@ -410,6 +524,10 @@ document_ready(function () {
 			var content_target = this.hash.tree.join("_"), target;
 			if (content_target.length > 0 && (target = $("#content_" + content_target)).length > 0 && target.hasClass("hidden")) {
 				display_content(target, content_target, event.source == "load");
+
+				if (content_target == "changes") {
+					acquire_changelog();
+				}
 			}
 			else {
 				display_content(null, null, false);

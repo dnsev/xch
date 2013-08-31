@@ -299,6 +299,67 @@ a:not([class]):hover:before {
 	vertical-align: middle;
 }
 
+.changelog_status:before,.changelog_status:after {
+	display: block;
+}
+.changelog:not(.loaded):not(.error)>.changelog_status:before {
+	content: "Loading changelog...";
+}
+.changelog.error>.changelog_status:before {
+	content: "Changelog could not be loaded:";
+}
+.changelog.error>.changelog_status[error_message]:after {
+	content: attr(error_message);
+	color: #dd0000;
+}
+.changelog_item {
+	display: block;
+}
+.changelog_item_title {
+	font-weight: bold;
+	padding-bottom: 4px;
+}
+.changelog_item_title_link {
+	color: #dd0000;
+	text-decoration: none;
+	cursor: pointer;
+	position: relative;
+	transition: color 0.125s linear;
+	-webkit-transition: color 0.125s linear;
+}
+.changelog_item_title_link:hover {
+	color: #aa0000;
+}
+.changelog_item_title_link:before {
+	content: "";
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	right: 0;
+	height: 0;
+	margin-bottom: 0px;
+	border-bottom: 1px solid #000000;
+	opacity: 0;
+	transition: opacity 0.125s linear;
+	-webkit-transition: opacity 0.125s linear;
+}
+.changelog_item_title_link:hover:before {
+	opacity: 1;
+}
+.changelog_item_content {
+	padding: 0px 0px 32px 20px;
+	margin: 0px;
+	list-style-type: disc;
+}
+.changelog_item_change {
+	padding: 0px;
+	margin: 0px;
+	font-size: 12px;
+}
+.changelog_item_change+.changelog_item_change {
+	padding-top: 4px;
+}
+
 li>* {
 	vertical-align: middle;
 }
