@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2.0.1
+// @version     0.2.1
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -871,18 +871,19 @@ var xch = (function () {
 		dom_to_string: function (object, filter_function) {
 			var str = "";
 
-			object.contents().each(function () {
-				if (this.tagName === undefined) {
-					str += this.nodeValue.replace(/\s+/g, " ");
+			var conts = object.contents();
+			for (var i = 0; i < conts.length; ++i) {
+				if (conts[i].tagName === undefined) {
+					str += conts[i].nodeValue.replace(/\s+/g, " ");
 				}
 				else {
-					var me = $(this);
-					if (!filter_function || filter_function.call(this, me, object)) {
+					var me = $(conts[i]);
+					if (!filter_function || filter_function.call(conts[i], me, object)) {
 						str += xch.dom_to_string(me);
-						if (this.tagName == "BR" || me.css("display") == "block") str += "\n";
+						if (conts[i].tagName == "BR" || me.css("display") == "block") str += "\n";
 					}
 				}
-			});
+			}
 
 			return str;
 		},
@@ -1639,19 +1640,10 @@ var xch = (function () {
 					this.get_listen_function = null;
 
 					// Acquire listening
-					this.on("acquire", function (event, data, self) {
-						return {
-							API: xch.API,
-							Message: xch.Message,
-							Popup: xch.Popup,
-							Menu: xch.Menu
-						};
-					}, this);
+					this.on("acquire", this_private.on_acquire, this);
 
 					// API
-					this.on_get("posts", function () {
-						return (content ? content.on_get_posts() : []);
-					});
+					this.on_get("posts", this_private.on_get_posts);
 				},
 
 				on_get: function (event, callback, callback_data) {
@@ -1699,6 +1691,19 @@ var xch = (function () {
 							}
 						}
 					}
+				},
+
+				on_acquire: function (event, data, self) {
+					return {
+						API: xch.API,
+						Message: xch.Message,
+						Popup: xch.Popup,
+						Menu: xch.Menu
+					};
+				},
+
+				on_get_posts: function () {
+					return (content ? content.on_get_posts() : []);
 				},
 
 				receive_get: function (data) {
@@ -1892,8 +1897,6 @@ var xch = (function () {
 		Location: (function () {
 
 			var Location = function () {
-				var self = this;
-
 				this.hash_mark = "#";
 
 				// Init
@@ -1903,12 +1906,18 @@ var xch = (function () {
 				this.events = {
 					"change": []
 				};
-				window.addEventListener("popstate", function (event) {
-					this_private.update_state.call(self, false, false);
-				}, false);
+				this_private.add_listeners.call(this);
 			};
 
 			var this_private = {
+
+				add_listeners: function () {
+					var self = this;
+
+					window.addEventListener("popstate", function () {
+						this_private.update_state.call(self, false, false);
+					}, false);
+				},
 
 				update_state: function (init, is_new) {
 					// Fragment
@@ -1935,7 +1944,7 @@ var xch = (function () {
 					// Trigger an event
 					var e = this.events[event];
 					for (var i = 0; i < e.length; ++i) {
-						e[i].call(this, data, event);
+						e[i][0].call(this, data, e[i][1], event);
 					}
 				}
 
@@ -1987,16 +1996,16 @@ var xch = (function () {
 					return url;
 				},
 
-				on: function (event, callback) {
+				on: function (event, callback, callback_data) {
 					if (event in this.events) {
-						this.events[event].push(callback);
+						this.events[event].push([callback, callback_data]);
 					}
 				},
 				off: function (event, callback) {
 					if (event in this.events) {
 						var e = this.events[event];
 						for (var i = 0; i < e.length; ++i) {
-							if (e[i] == callback) {
+							if (e[i][0] == callback) {
 								e.splice(i, 1);
 								--i;
 							}
@@ -2014,8 +2023,6 @@ var xch = (function () {
 		Communication: (function () {
 
 			var Communication = function () {
-				var self = this;
-
 				// Tab count management
 				this.count_tabs = false;
 				if (this.count_tabs) {
@@ -2041,13 +2048,19 @@ var xch = (function () {
 				// Opening
 				this_private.on_open.call(this);
 
-				// Closing
-				window.addEventListener("beforeunload", function (event) {
-					this_private.on_close.call(self);
-				}, false);
+				this_private.add_listeners.call(this);
 			};
 
 			var this_private = {
+
+				add_listeners: function () {
+					var self = this;
+
+					// Closing
+					window.addEventListener("beforeunload", function () {
+						this_private.on_close.call(self);
+					}, false);
+				},
 
 				on_open: function () {
 					if (!this.count_tabs) return;
@@ -2254,6 +2267,15 @@ var xch = (function () {
 				this.board_title_format = "/%board/ - %title";
 				this.board_subtitle_format = "%subtitle";
 
+				this.fixed = true;
+
+				this.screen_area = {
+					left: 0,
+					top: 0,
+					width: 0,
+					height: 0
+				};
+
 				this.op_format = {
 					max_length: 80,
 					cutoff: "...",
@@ -2278,8 +2300,6 @@ var xch = (function () {
 			var this_private = {
 
 				parse: function (html) {
-					var self = this;
-
 					// Board
 					this.board = info.board;
 
@@ -2299,25 +2319,26 @@ var xch = (function () {
 					var group = 0;
 					var group_add = false;
 					var bl = html.find("body>.boardlist:not(.bottom)");
-					bl.children("a").each(function () {
-						var href = $(this).attr("href");
-						var m = /\/\/boards\.38chan\.net\/(\w+)\/index\.html/i.exec(href);
+					var bl_a = bl.children("a");
+					for (var i = 0, m, href; i < bl_a.length; ++i) {
+						href = $(bl_a[i]).attr("href");
+						m = /\/\/boards\.38chan\.net\/(\w+)\/index\.html/i.exec(href);
 						if (m) {
-							if (m[1] == self.board) {
-								self.add_board(m[1], group, self.board_title, self.board_subtitle);
+							if (m[1] == this.board) {
+								this.add_board(m[1], group, this.board_title, this.board_subtitle);
 							}
 							else {
-								self.add_board(m[1], group, null, null);
+								this.add_board(m[1], group, null, null);
 							}
 							group_add = true;
 						}
-						if (group_add && this.nextSibling) {
-							if (!/\//.test(this.nextSibling.nodeValue || "")) {
+						if (group_add && bl_a[i].nextSibling) {
+							if (!/\//.test(bl_a[i].nextSibling.nodeValue || "")) {
 								++group;
 								group_add = false;
 							}
 						}
-					});
+					}
 
 					// Remove board list
 					bl.remove();
@@ -2363,7 +2384,7 @@ var xch = (function () {
 					// Create the header
 					var board_list, options, post_option, thread_option, menu_option;
 					body.prepend( //{
-						(this.container = style.e("div", "header fixed"))
+						(this.container = style.e("div", "header" + (this.fixed ? " fixed" : "")))
 						.append(
 							style.e("div", "header_background")
 						)
@@ -2450,36 +2471,16 @@ var xch = (function () {
 							(p_sel = style.e("a", "header_option header_option_page"))
 							.text(this.format_page(this.page_format.main, this.page_index, this.page_count))
 						);
-						var p_sel_data = { menu: null };
-						p_sel.on("mouseenter click", p_sel_data, function (event) {
-							// Create page selector
-							this_private.create_page_selector.call(self, $(this), event.data);
-						});
+						var p_sel_data = { self: this, menu: null };
+						p_sel.on("mouseenter click", p_sel_data, this_private.on_page_selector_create_click);
 					}
 
 					// Events
 					var data = { self: this };
-					post_option.on("click", data, function (event) {
-						if (event.which != 1) return true;
-
-						var qr = content.qr;
-						if (!qr.is_open()) {
-							qr.open();
-							if (qr.settings.window.clear_post_on_reopen) {
-								qr.clear();
-							}
-						}
-						qr.focus_comment();
-
-						return false;
-					});
-					menu_option.on("click", data, function (event) {
-						if (event.which != 1) return true;
-
-						this_private.create_main_menu.call(event.data.self, $(this));
-
-						return false;
-					});
+					post_option.on("click", data, this_private.on_post_option_click);
+					thread_option.on("click", data, this_private.on_thread_option_click);
+					menu_option.on("click", data, this_private.on_menu_option_click);
+					$(window).on("resize", data, this_private.on_window_resize);
 
 					// Board info
 					this.container.after(
@@ -2488,12 +2489,8 @@ var xch = (function () {
 							style.e("div", "board_banner_container")
 							.append(
 								style.e("img", "board_banner")
-								.on("load", function (event) {
-									$(this).parent().addClass("loaded");
-								})
-								.on("error", function (event) {
-									$(this).parent().addClass("error");
-								})
+								.on("load", this_private.on_banner_load)
+								.on("error", this_private.on_banner_error)
 								.attr("src", "/banners/banner.php")
 							)
 						) //}
@@ -2506,8 +2503,52 @@ var xch = (function () {
 							.text(this.format_board_info(this.board_subtitle_format))
 						)
 					);
+
+					// Update
+					this_private.update_screen_area.call(this);
 				},
 
+				on_page_selector_create_click: function (event) {
+					// Create page selector
+					this_private.create_page_selector.call(event.data.self, $(this), event.data);
+				},
+				on_post_option_click: function (event) {
+					if (event.which != 1) return true;
+
+					var qr = content.qr;
+					if (!qr.is_open()) {
+						qr.open();
+						if (qr.settings.window.clear_post_on_reopen) {
+							qr.clear();
+						}
+					}
+					qr.focus_comment();
+
+					return false;
+				},
+				on_thread_option_click: function (event) {
+					if (event.which != 1) return true;
+
+					return false;
+				},
+				on_menu_option_click: function (event) {
+					if (event.which != 1) return true;
+
+					this_private.create_main_menu.call(event.data.self, $(this));
+
+					return false;
+				},
+
+				on_banner_load: function () {
+					$(this).parent().addClass("loaded");
+				},
+				on_banner_error: function () {
+					$(this).parent().addClass("error");
+				},
+
+				on_window_resize: function (event) {
+					this_private.update_screen_area.call(event.data.self);
+				},
 				on_main_menu_close: function (event, self) {
 					api.signal("main_menu_close", {
 						menu: self.main_menu
@@ -2695,6 +2736,20 @@ var xch = (function () {
 							}
 						}
 					});
+				},
+
+				update_screen_area: function () {
+					var h = this.container.outerHeight();
+					if (!this.fixed) {
+						h = Math.max(0, h - win.scrollTop());
+					}
+
+					var win = $(window);
+
+					this.screen_area.left = 0;
+					this.screen_area.top = h;
+					this.screen_area.width = win.width();
+					this.screen_area.height = win.height() - h;
 				}
 
 			};
@@ -2719,21 +2774,12 @@ var xch = (function () {
 					return (this.container.hasClass("fixed"));
 				},
 				get_screen_area: function () {
-					var w = $(window);
-					var area = {
-						left: 0,
-						top: 0,
-						width: w.width(),
-						height: w.height()
+					return {
+						left: this.screen_area.left,
+						top: this.screen_area.top,
+						width: this.screen_area.width,
+						height: this.screen_area.height
 					};
-					var h = this.container.outerHeight();
-					if (!this.container.hasClass("fixed")) {
-						h = Math.max(area.top, h - w.scrollTop());
-					}
-					area.top = h;
-					area.height -= h;
-
-					return area;
 				},
 
 				format_board_info: function (str) {
@@ -3029,13 +3075,8 @@ var xch = (function () {
 				content.on("thread_update", this_private.on_thread_updated, this);
 				content.on("thread_load", this_private.on_thread_deleted, this);
 
-				communication.cross_tab_on("qr_save", function (event, self) {
-					this_private.on_cross_tab_save.call(self, event);
-				}, this);
-
-				communication.cross_tab_on("qr_context_expire", function (event, self) {
-					this_private.on_cross_tab_context_change.call(self, event);
-				}, this);
+				communication.cross_tab_on("qr_save", this_private.on_cross_tab_save, this);
+				communication.cross_tab_on("qr_context_expire", this_private.on_cross_tab_context_change, this);
 			};
 
 			var this_private = {
@@ -3095,26 +3136,26 @@ var xch = (function () {
 					});
 				},
 
-				on_cross_tab_save: function (event) {
+				on_cross_tab_save: function (event, self) {
 					if (event.value == "position") {
-						this_private.load_position.call(this, true);
+						this_private.load_position.call(self, true);
 					}
 					else if (event.value == "size") {
-						this_private.load_size.call(this, true);
+						this_private.load_size.call(self, true);
 					}
 					else if (event.value == "persistent") {
-						this_private.load_persistency.call(this, true);
+						this_private.load_persistency.call(self, true);
 					}
 					else if (event.value == "post_name") {
-						this_private.load_post_name.call(this);
+						this_private.load_post_name.call(self);
 					}
 					else if (event.value == "post_email") {
-						this_private.load_post_email.call(this);
+						this_private.load_post_email.call(self);
 					}
 				},
-				on_cross_tab_context_change: function (event) {
+				on_cross_tab_context_change: function (event, self) {
 					// Check if context needs an update
-					var target = (this.target_thread_is_current ? this.target_thread : this.post_context.thread);
+					var target = (self.target_thread_is_current ? self.target_thread : self.post_context.thread);
 					var needs_update = false;
 					if (target) {
 						if (
@@ -3129,8 +3170,8 @@ var xch = (function () {
 					}
 
 					// Update
-					if (needs_update && !this.post_context.acquiring) {
-						this_private.acquire_post_context.call(this, this.target_thread)
+					if (needs_update && !self.post_context.acquiring) {
+						this_private.acquire_post_context.call(self, self.target_thread)
 					}
 				},
 
@@ -3221,6 +3262,191 @@ var xch = (function () {
 					if (info.index ? this.settings.window.auto_open.on_index : this.settings.window.auto_open.in_thread) {
 						this.open(null);
 					}
+				},
+
+				cancel_event: function (event) {
+					return (event.which != 1);
+				},
+				on_simple_change: function (event) {
+					event.data.self.post_data[event.data.self.post_data_id_current][event.data.field].value = $(this).val();
+
+					if ("save" in event.data) {
+						event.data.save.compare.call(event.data.self);
+					}
+				},
+				on_simple_blur: function (event) {
+					var sel = xch.get_selection($(this));
+					event.data.self.post_data[event.data.self.post_data_id_current][event.data.field].selection.start = sel.start;
+					event.data.self.post_data[event.data.self.post_data_id_current][event.data.field].selection.end = sel.end;
+				},
+				on_simple_remove: function (event) {
+					if (event.which != 1) return true;
+
+					if ("save" in event.data) {
+						var new_val = "";
+
+						event.data.save.target.val(new_val);
+						event.data.self.post_data[event.data.self.post_data_id_current][event.data.field].value = new_val;
+
+						event.data.save.save.call(event.data.self, new_val);
+					}
+				},
+
+				on_resizer_mousedown: function (event) {
+					if (event.which != 1) return true;
+
+					// Resize start
+					var ic_pos = event.data.inner_container.offset();
+					var me = $(this);
+					event.data.self.resizing.active = true;
+
+					if (me.hasClass("left")) {
+						event.data.self.resizing.x = -1;
+					}
+					else if (me.hasClass("right")) {
+						event.data.self.resizing.x = 1;
+					}
+					else {
+						event.data.self.resizing.x = 0;
+					}
+
+					if (me.hasClass("top")) {
+						event.data.self.resizing.y = -1;
+					}
+					else if (me.hasClass("bottom")) {
+						event.data.self.resizing.y = 1;
+					}
+					else {
+						event.data.self.resizing.y = 0;
+					}
+
+					event.data.self.resizing.base_pos.x = event.data.self.position.x;
+					event.data.self.resizing.base_pos.y = event.data.self.position.y;
+
+					event.data.self.resizing.base_size.width = event.data.self.size.width;
+					event.data.self.resizing.base_size.height = event.data.self.size.height;
+
+					event.data.self.resizing.base_mouse.x = event.pageX - $(window).scrollLeft();
+					event.data.self.resizing.base_mouse.y = event.pageY - $(window).scrollTop();
+
+					return false;
+				},
+				resizer_timeout_set: function (event_data) {
+					this.resizer_display_timer = setTimeout(function () {
+						event_data.resizers.removeClass("hidden");
+					}, this.settings.window.resize_display_time * 1000);
+				},
+				on_container_mouseenter: function (event) {
+					if (!event.data.self.resizing.active) {
+						if (event.data.self.resizer_display_timer !== null) {
+							clearTimeout(event.data.self.resizer_display_timer);
+						}
+						this_private.resizer_timeout_set.call(event.data.self, event.data);
+					}
+				},
+				on_container_mouseleave: function (event) {
+					if (!event.data.self.resizing.active) {
+						if (event.data.self.resizer_display_timer !== null) {
+							clearTimeout(event.data.self.resizer_display_timer);
+							event.data.self.resizer_display_timer = null;
+						}
+						event.data.resizers.addClass("hidden");
+					}
+				},
+
+				on_main_label_click: function (event) {
+					if (event.which != 1) return true;
+					// Change persistency
+					event.data.self.set_persistency(!event.data.self.container.hasClass("persistent"), false);
+				},
+				on_main_label_target_click: function (event) {
+					if (event.which != 1) return true;
+
+					// Change thread
+					if (event.data.self.target_selector_is_open()) {
+						event.data.self.close_target_selector();
+					}
+					else {
+						event.data.self.open_target_selector();
+					}
+					return false;
+				},
+				on_close_click: function (event) {
+					if (event.which != 1) return true;
+
+					// Close
+					event.data.self.close();
+				},
+				on_grabber_mousedown: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.self.moving.active = true;
+
+					var o = event.data.self.container.offset();
+					event.data.self.moving.offset.x = event.pageX - o.left;
+					event.data.self.moving.offset.y = event.pageY - o.top;
+
+					return false;
+				},
+
+				on_submit_click: function (event) {
+					if (event.which != 1) return true;
+
+					// Submit
+					this_private.submit_try.call(event.data.self, event.shiftKey);
+				},
+
+				on_file_name_click: function (event) {
+					if (event.which != 1) return true;
+
+					if (!event.data.filesel.attr("readonly")) {
+						if (event.data.self.post_data[event.data.self.post_data_id_current].file.file != null && (event.shiftKey || event.data.name_editing)) {
+							var obj = $(this);
+							obj.removeAttr("readonly");
+							event.data.name_editing = true;
+						}
+						else {
+							event.data.filesel.click();
+						}
+					}
+				},
+				on_file_name_blur: function (event) {
+					if (event.data.name_editing) {
+						// Updat ename
+						var obj = $(this);
+						obj.attr("readonly", "readonly");
+						event.data.self.name_editing = false;
+
+						var name = event.data.self.set_file_name(obj.val());
+						if (name !== null) obj.val(name);
+					}
+				},
+				on_file_remove_click: function (event) {
+					if (event.which != 1) return true;
+
+					if (!event.data.filesel.attr("readonly")) {
+						event.data.self.set_file(null);
+					}
+				},
+				on_file_change: function (event) {
+					// Load file
+					var files = event.target.files;
+					if (files) {
+						for (var i = 0; i < files.length; ++i) {
+							if (event.data.self.set_file(files[i])) break;
+						}
+					}
+					// Nullify
+					this.value = null;
+				},
+				on_file_spoiler_change: function (event) {
+					var obj = $(this);
+					var ch = obj.is(":checked");
+					if (obj.attr("readonly")) {
+						ch = !ch;
+						obj.prop("checked", ch);
+					}
+					event.data.self.post_data[event.data.self.post_data_id_current].spoiler.value = ch;
 				},
 
 				create: function () {
@@ -3466,212 +3692,48 @@ var xch = (function () {
 					}
 
 					// Events
-					var data = { qr: this };
-					var r_data = { qr: this, resizers: resizers };
+					var data = { self: this };
+					var r_data = { self: this, resizers: resizers };
 					var i_data;
-					var cancel = function (event) {
-						return (event.which != 1);
-					};
 
 					resizers.children(".popup_resizer")
-					.on("mousedown", { qr: this, inner_container: cont }, function (event) {
-						if (event.which != 1) return true;
-
-						// Resize start
-						var ic_pos = event.data.inner_container.offset();
-						var me = $(this);
-						event.data.qr.resizing.active = true;
-
-						if (me.hasClass("left")) {
-							event.data.qr.resizing.x = -1;
-						}
-						else if (me.hasClass("right")) {
-							event.data.qr.resizing.x = 1;
-						}
-						else {
-							event.data.qr.resizing.x = 0;
-						}
-
-						if (me.hasClass("top")) {
-							event.data.qr.resizing.y = -1;
-						}
-						else if (me.hasClass("bottom")) {
-							event.data.qr.resizing.y = 1;
-						}
-						else {
-							event.data.qr.resizing.y = 0;
-						}
-
-						event.data.qr.resizing.base_pos.x = event.data.qr.position.x;
-						event.data.qr.resizing.base_pos.y = event.data.qr.position.y;
-
-						event.data.qr.resizing.base_size.width = event.data.qr.size.width;
-						event.data.qr.resizing.base_size.height = event.data.qr.size.height;
-
-						event.data.qr.resizing.base_mouse.x = event.pageX - $(window).scrollLeft();
-						event.data.qr.resizing.base_mouse.y = event.pageY - $(window).scrollTop();
-
-						return false;
-					});
+					.on("mousedown", { self: this, inner_container: cont }, this_private.on_resizer_mousedown);
 
 					this.container
-					.on("mouseenter", r_data, function (event) {
-						if (!event.data.qr.resizing.active) {
-							if (event.data.qr.resizer_display_timer !== null) {
-								clearTimeout(event.data.qr.resizer_display_timer);
-							}
-							event.data.qr.resizer_display_timer = setTimeout(function () {
-								event.data.resizers.removeClass("hidden");
-							}, event.data.qr.settings.window.resize_display_time * 1000);
-						}
-					})
-					.on("mouseleave", r_data, function (event) {
-						if (!event.data.qr.resizing.active) {
-							if (event.data.qr.resizer_display_timer !== null) {
-								clearTimeout(event.data.qr.resizer_display_timer);
-								event.data.qr.resizer_display_timer = null;
-							}
-							event.data.resizers.addClass("hidden");
-						}
-					});
+					.on("mouseenter", r_data, this_private.on_container_mouseenter)
+					.on("mouseleave", r_data, this_private.on_container_mouseleave);
 
-					main_label.on("mousedown", cancel);
+					main_label.on("mousedown", this_private.cancel_event);
 
-					main_label_text.on("mousedown", cancel)
-					.on("click", data, function (event) {
-						if (event.which != 1) return true;
-						// Change persistency
-						event.data.qr.set_persistency(!event.data.qr.container.hasClass("persistent"), false);
-					});
+					main_label_text.on("mousedown", this_private.cancel_event)
+					.on("click", data, this_private.on_main_label_click);
 
-					this.main_label_target_link.on("mousedown", cancel)
-					.on("click", data, function (event) {
-						if (event.which != 1) return true;
-						// Change thread
-						if (event.data.qr.target_selector_is_open()) {
-							event.data.qr.close_target_selector();
-						}
-						else {
-							event.data.qr.open_target_selector();
-						}
-						return false;
-					});
+					this.main_label_target_link.on("mousedown", this_private.cancel_event)
+					.on("click", data, this_private.on_main_label_target_click);
 
-					close.on("mousedown", function (event) {
-						return (event.which != 1);
-					})
-					.on("click", data, function (event) {
-						if (event.which != 1) return true;
-						// Close
-						event.data.qr.close();
-					});
+					close.on("mousedown", this_private.cancel_event)
+					.on("click", data, this_private.on_close_click);
 
-					grabber.on("mousedown", data, function (event) {
-						if (event.which != 1) return true;
+					grabber.on("mousedown", data, this_private.on_grabber_mousedown);
 
-						event.data.qr.moving.active = true;
-
-						var o = event.data.qr.container.offset();
-						event.data.qr.moving.offset.x = event.pageX - o.left;
-						event.data.qr.moving.offset.y = event.pageY - o.top;
-
-						return false;
-					});
-
-					submit.on("click", data, function (event) {
-						if (event.which != 1) return true;
-
-						// Submit
-						this_private.submit_try.call(event.data.qr, event.shiftKey);
-					});
+					submit.on("click", data, this_private.on_submit_click);
 
 					// Input events
-					var simple_change = function (event) {
-						event.data.qr.post_data[event.data.qr.post_data_id_current][event.data.field].value = $(this).val();
-
-						if ("save" in event.data) {
-							event.data.save.compare.call(event.data.qr);
-						}
-					};
-					var simple_blur = function (event) {
-						var sel = xch.get_selection($(this));
-						event.data.qr.post_data[event.data.qr.post_data_id_current][event.data.field].selection.start = sel.start;
-						event.data.qr.post_data[event.data.qr.post_data_id_current][event.data.field].selection.end = sel.end;
-					};
-					var simple_remove = function (event) {
-						if (event.which != 1) return true;
-
-						if ("save" in event.data) {
-							var new_val = "";
-
-							event.data.save.target.val(new_val);
-							event.data.qr.post_data[event.data.qr.post_data_id_current][event.data.field].value = new_val;
-
-							event.data.save.save.call(event.data.qr, new_val);
-						}
-					};
-					i_name.on("change", i_data = { qr: this, field: "name", save: { compare:this_private.compare_post_name, save:this_private.save_post_name, target:i_name } }, simple_change);
-					i_name.on("blur", i_data, simple_blur);
-					i_name_remove.on("click", i_data, simple_remove);
-					i_email.on("change", i_data = { qr: this, field: "email", save: { compare:this_private.compare_post_email, save:this_private.save_post_email, target:i_email } }, simple_change);
-					i_email.on("blur", i_data, simple_blur);
-					i_email_remove.on("click", i_data, simple_remove);
-					i_subject.on("change", i_data = { qr: this, field: "subject" }, simple_change);
-					i_subject.on("blur", i_data, simple_blur);
-					i_comment.on("change", i_data = { qr: this, field: "comment" }, simple_change);
-					i_comment.on("blur", i_data, simple_blur);
-					i_file_name.on("click", i_data = { qr: this, filesel: i_file, name_editing: false }, function (event) {
-						if (event.which != 1) return true;
-
-						if (!event.data.filesel.attr("readonly")) {
-							if (event.data.qr.post_data[event.data.qr.post_data_id_current].file.file != null && (event.shiftKey || event.data.name_editing)) {
-								var obj = $(this);
-								obj.removeAttr("readonly");
-								event.data.name_editing = true;
-							}
-							else {
-								event.data.filesel.click();
-							}
-						}
-					})
-					.on("blur", i_data, function (event) {
-						if (event.data.name_editing) {
-							// Updat ename
-							var obj = $(this);
-							obj.attr("readonly", "readonly");
-							event.data.qr.name_editing = false;
-
-							var name = event.data.qr.set_file_name(obj.val());
-							if (name !== null) obj.val(name);
-						}
-					});
-					i_file_remove.on("click", i_data, function (event) {
-						if (event.which != 1) return true;
-
-						if (!event.data.filesel.attr("readonly")) {
-							event.data.qr.set_file(null);
-						}
-					});
-					i_file.on("change", data, function (event) {
-						// Load file
-						var files = event.target.files;
-						if (files) {
-							for (var i = 0; i < files.length; ++i) {
-								if (event.data.qr.set_file(files[i])) break;
-							}
-						}
-						// Nullify
-						this.value = null;
-					});
-					(i_file_spoiler_input = i_file_spoiler.find("input")).on("change", data, function (event) {
-						var obj = $(this);
-						var ch = obj.is(":checked");
-						if (obj.attr("readonly")) {
-							ch = !ch;
-							obj.prop("checked", ch);
-						}
-						event.data.qr.post_data[event.data.qr.post_data_id_current].spoiler.value = ch;
-					});
+					i_name.on("change", i_data = { self: this, field: "name", save: { compare:this_private.compare_post_name, save:this_private.save_post_name, target:i_name } }, this_private.on_simple_change);
+					i_name.on("blur", i_data, this_private.on_simple_blur);
+					i_name_remove.on("click", i_data, this_private.on_simple_remove);
+					i_email.on("change", i_data = { self: this, field: "email", save: { compare:this_private.compare_post_email, save:this_private.save_post_email, target:i_email } }, this_private.on_simple_change);
+					i_email.on("blur", i_data, this_private.on_simple_blur);
+					i_email_remove.on("click", i_data, this_private.on_simple_remove);
+					i_subject.on("change", i_data = { self: this, field: "subject" }, this_private.on_simple_change);
+					i_subject.on("blur", i_data, this_private.on_simple_blur);
+					i_comment.on("change", i_data = { self: this, field: "comment" }, this_private.on_simple_change);
+					i_comment.on("blur", i_data, this_private.on_simple_blur);
+					i_file_name.on("click", i_data = { self: this, filesel: i_file, name_editing: false }, this_private.on_file_name_click)
+					.on("blur", i_data, this_private.on_file_name_blur);
+					i_file_remove.on("click", i_data, this_private.on_file_remove_click);
+					i_file.on("change", data, this_private.on_file_change);
+					(i_file_spoiler_input = i_file_spoiler.find("input")).on("change", data, this_private.on_file_spoiler_change);
 
 					// List of all fields
 					this.fields = i_name.add(i_email).add(i_subject).add(i_comment).add(i_file).add(i_file_spoiler_input);
@@ -3727,7 +3789,8 @@ var xch = (function () {
 					// Sizing
 					var full_size = this.container.children(".popup_content").innerWidth();
 					if (full_size < 1) full_size = 1;
-					this.container.find(".qr_row").each(function () {
+					var rows = this.container.find(".qr_row");
+					for (var r = 0, i; r < rows.length; ++r) {
 						// Init
 						var total_percent = 0;
 						var total_pixels = 0;
@@ -3735,9 +3798,9 @@ var xch = (function () {
 						var percent = [];
 
 						// Group
-						var input_containers = $(this).children();
-						input_containers.each(function () {
-							var ic = $(this);
+						var input_containers = $(rows[r]).children();
+						for (i = 0; i < input_containers.length; ++i) {
+							var ic = $(input_containers[i]);
 							var tw = ic.attr("target_width");
 							var m, val;
 							if ((m = /([0-9]+)px/.exec(tw))) {
@@ -3751,15 +3814,15 @@ var xch = (function () {
 								total_percent += val;
 							}
 							else if (tw == "auto") {
-								this.style.width = "";
+								input_containers[i].style.width = "";
 								val = ic.outerWidth();
 								pixels.push([ic, val]);
 								total_pixels += val;
 							}
-						});
+						}
 
 						// Size pixels
-						var scale = 1, i;
+						var scale = 1;
 						if (total_percent == 0 || total_pixels > full_size) {
 							scale = full_size / total_pixels;
 							total_pixels = full_size;
@@ -3776,11 +3839,12 @@ var xch = (function () {
 
 						// Height
 						var max_height = 0;
-						input_containers.css("height", "").each(function () {
-							max_height = Math.max(max_height, $(this).outerHeight());
-						});
+						input_containers.css("height", "");
+						for (i = 0; i < input_containers.length; ++i) {
+							max_height = Math.max(max_height, $(input_containers[i]).outerHeight());
+						}
 						input_containers.css("height", max_height + "px");
-					});
+					};
 				},
 
 				create_post_data: function () {
@@ -3851,8 +3915,6 @@ var xch = (function () {
 					});
 				},
 				acquire_post_context_from_html: function (html, thread, expire_old) {
-					var self = this;
-
 					// Find data
 					var post_form = html.find('form[name="post"]');
 					if (post_form.length > 0) {
@@ -3860,23 +3922,25 @@ var xch = (function () {
 						this.post_context.data_fields_extra = [];
 
 						// Extra fields
-						var ignore_fields = ["thread","board","post"];
+						var ignore_fields = ["thread", "board", "post"];
 						for (var field in this.post_data_names) {
 							ignore_fields.push(this.post_data_names[field]);
 						}
 
-						post_form.find("input,textarea").each(function () {
-							var me = $(this);
+						var inputs = post_form.find("input,textarea");
+						for (var j = 0; j < inputs.length; ++j) {
+							var me = $(inputs[j]);
 							var name = me.attr("name");
 							for (var i = 0; i < ignore_fields.length; ++i) {
-								if (name == ignore_fields[i]) return;
+								if (name == ignore_fields[i]) break;
 							}
+							if (i < ignore_fields.length) continue; // Skip
 							// Add
-							self.post_context.data_fields_extra.push({
+							this.post_context.data_fields_extra.push({
 								name: name,
 								value: me.val()
 							});
-						});
+						}
 
 						this.post_context.thread = thread;
 
@@ -4262,7 +4326,7 @@ var xch = (function () {
 					});
 
 					// Done
-					this_private.submit_complete.call(event.data.qr, event.data, true);
+					this_private.submit_complete.call(event.data.qr, event.data.qr_submit_data, true);
 				},
 				submit_on_error: function (event) {
 					this_private.submit_error.call(event.data.qr, {
@@ -4296,7 +4360,7 @@ var xch = (function () {
 					});
 
 					// Done
-					this_private.submit_complete.call(event.data.qr, event.data, true);
+					this_private.submit_complete.call(event.data.qr, event.data.qr_submit_data, true);
 				},
 				submit_on_upload_error: function (event) {
 					this_private.submit_error.call(event.data.qr, {
@@ -4420,10 +4484,8 @@ var xch = (function () {
 					else if (!this.submitting.queued) {
 						this_private.submit_status_hide.call(this);
 					}
-					var self = this;
-					loader.on("progress", function (event) {
-						return this_private.submit_on_parse_progress.call(self, event);
-					});
+
+					loader.on("progress", this_private.submit_on_parse_progress, this);
 
 					// How to use the loader
 					if (ajax_data.qr_target_thread == null) {
@@ -4459,7 +4521,7 @@ var xch = (function () {
 					// Post context
 					this_private.acquire_post_context_from_html.call(this, html, ajax_data.qr_target_thread, true);
 				},
-				submit_complete: function (ajax_data, aborted) {
+				submit_complete: function (submit_data, aborted) {
 					// Submission complete
 					this.submitting.active = false;
 					this.submitting.data = null;
@@ -4468,8 +4530,8 @@ var xch = (function () {
 					this.submitting.ajax = null;
 
 					// Save
-					this_private.save_post_name.call(this, ajax_data.qr_submit_data.name.value);
-					this_private.save_post_email.call(this, ajax_data.qr_submit_data.email.value);
+					this_private.save_post_name.call(this, submit_data.name.value);
+					this_private.save_post_email.call(this, submit_data.email.value);
 
 					// Clear post
 					if (!this.submitting.cleared_fields) {
@@ -4497,9 +4559,9 @@ var xch = (function () {
 					}
 				},
 
-				submit_on_parse_progress: function (event) {
+				submit_on_parse_progress: function (event, self) {
 					if (event.type == "parse") {
-						this_private.submit_progress_change.call(this, "parse", event.loaded / event.total);
+						this_private.submit_progress_change.call(self, "parse", event.loaded / event.total);
 					}
 				},
 
@@ -4769,152 +4831,165 @@ var xch = (function () {
 				},
 
 				setup_submitted_thread_find: function (ajax_data, loader, redirect_to_thread) {
-					var self = this;
-
-					var new_post = null;
-					var new_thread = null;
-					var finish_function = function () {
-						// Mark post as "you"
-						content.mark_post_as_me(new_post, ajax_data.qr_submit_data, ajax_data.qr_password, true);
-						this_private.submit_complete.call(self, ajax_data, false);
-
-						new xch.Message({
-							type: "okay",
-							title: "Post Successful",
-							text: "Your thread was successfully submitted"
-						});
-
-						// Go to thread
-						if (redirect_to_thread) {
-							// Go to thread
-							location.go_to_new(
-								info.create_url.to_thread(new_post.thread.board, new_post.thread.id)
-							);
-						}
+					var cb_data = {
+						self: this,
+						new_post: null,
+						new_thread: null,
+						finish_function: this_private.on_submitted_thread_loader_finish,
+						redirect_to_thread: redirect_to_thread,
+						submit_data: ajax_data.qr_submit_data,
+						password: ajax_data.qr_password
 					};
 
 					// Events
-					loader.on("thread_ready", function (event) {
-						// Main thread
-						if (new_thread == null) {
-							new_thread = event.thread;
-						}
+					loader.on("thread_ready", this_private.on_submitted_thread_loader_thread_ready, cb_data);
+					loader.on("post_load", this_private.on_submitted_thread_loader_post_load, cb_data);
+					loader.on("complete", this_private.on_submitted_thread_loader_complete, cb_data);
+				},
+				on_submitted_thread_loader_finish: function (cb_data) {
+					// Mark post as "you"
+					content.mark_post_as_me(cb_data.new_post, cb_data.submit_data, cb_data.password, true);
+					this_private.submit_complete.call(cb_data.self, cb_data.submit_data, false);
+
+					new xch.Message({
+						type: "okay",
+						title: "Post Successful",
+						text: "Your thread was successfully submitted"
 					});
-					loader.on("post_load", function (event) {
-						// Main post
-						if (new_post == null && event.post.op && event.post.thread == new_thread) {
-							// Finish
-							new_post = event.post;
-							finish_function.call(self);
-							finish_function = null;
-						}
-					});
-					loader.on("complete", function (event) {
-						// Check
-						if (new_thread == null) {
-							// Error
-							this_private.submit_error.call(self, {
-								type: "Post Retrieval Error",
-								detail: "Your thread could not be found after submission",
-								cooldown: "post_retrieval_error"
-							});
-						}
-						else if (finish_function != null) {
-							if (new_post == null) {
-								for (var i = 0; i < new_thread.posts.length; ++i) {
-									if (new_thread.posts[i].op) {
-										new_post = new_thread.posts[i];
-										break;
-									}
+
+					// Go to thread
+					if (cb_data.redirect_to_thread) {
+						// Go to thread
+						location.go_to_new(
+							info.create_url.to_thread(cb_data.new_post.thread.board, cb_data.new_post.thread.id)
+						);
+					}
+				},
+				on_submitted_thread_loader_thread_ready: function (event, cb_data) {
+					// Main thread
+					if (cb_data.new_thread == null) {
+						cb_data.new_thread = event.thread;
+					}
+				},
+				on_submitted_thread_loader_post_load: function (event, cb_data) {
+					// Main post
+					if (cb_data.new_post == null && event.post.op && event.post.thread == cb_data.new_thread) {
+						// Finish
+						cb_data.new_post = event.post;
+						cb_data.finish_function.call(cb_data.self, cb_data);
+						cb_data.finish_function = null;
+					}
+				},
+				on_submitted_thread_loader_complete: function (event, cb_data) {
+					// Check
+					if (cb_data.new_thread == null) {
+						// Error
+						this_private.submit_error.call(self, {
+							type: "Post Retrieval Error",
+							detail: "Your thread could not be found after submission",
+							cooldown: "post_retrieval_error"
+						});
+					}
+					else if (cb_data.finish_function != null) {
+						if (cb_data.new_post == null) {
+							for (var i = 0; i < cb_data.new_thread.posts.length; ++i) {
+								if (cb_data.new_thread.posts[i].op) {
+									cb_data.new_post = cb_data.new_thread.posts[i];
+									break;
 								}
 							}
-							if (new_post == null) {
-								// Error
-								this_private.submit_error.call(self, {
-									type: "Post Retrieval Error",
-									detail: "Your thread's OP could not be found after submission",
-									cooldown: "post_retrieval_error"
-								});
-							}
-							else {
-								// Finish
-								finish_function.call(self);
-								finish_function = null;
-							}
 						}
-					});
-				},
-				setup_submitted_post_find: function (ajax_data, loader, redirect_to_thread) {
-					var self = this;
-					var new_posts = [];
-
-					var on_content_post_load = content.on("post_load", function (event) {
-						// Check if it's the correct thread
-						if (event.post.thread == ajax_data.qr_target_thread) {
-							if (event.post_context.is_new) {
-								// New
-								new_posts.push({
-									post: event.post,
-									is_same_loader: (event.context.loader == loader)
-								});
-							}
-						}
-					});
-					loader.on("complete", function (event) {
-						// Disable events
-						content.off("post_load", on_content_post_load);
-						on_content_post_load = null;
-
-						// Find post
-						var my_post = null;
-						for (var i = new_posts.length - 1; i >= 0; --i) {
-							// Set post
-							if (
-								my_post == null ||
-								this_private.which_post_is_more_accurate.call(self, ajax_data.qr_submit_data, [my_post, new_posts[i].post]) == 1
-							) {
-								my_post = new_posts[i].post;
-							}
-						}
-
-						// Error checking
-						if (my_post == null) {
+						if (cb_data.new_post == null) {
 							// Error
-							this_private.submit_error.call(self, {
+							this_private.submit_error.call(cb_data.self, {
 								type: "Post Retrieval Error",
-								detail: "Your post could not be found after submission",
+								detail: "Your thread's OP could not be found after submission",
 								cooldown: "post_retrieval_error"
 							});
 						}
 						else {
-							// Mark post as "you"
-							content.mark_post_as_me(my_post, ajax_data.qr_submit_data, ajax_data.qr_password, true);
-							this_private.submit_complete.call(self, ajax_data, false);
+							// Finish
+							cb_data.finish_function.call(cb_data.self, cb_data);
+							cb_data.finish_function = null;
+						}
+					}
+				},
 
-							// Message
-							new xch.Message({
-								type: "okay",
-								title: "Post Successful",
-								text: "Your post was successfully submitted"
-							});
+				setup_submitted_post_find: function (ajax_data, loader, redirect_to_thread) {
+					var cb_data = {
+						self: this,
+						new_posts: [],
+						redirect_to_thread: redirect_to_thread,
+						target_thread: ajax_data.qr_target_thread,
+						submit_data: ajax_data.qr_submit_data,
+						password: ajax_data.qr_password
+					};
 
+					content.on("post_load", this_private.on_submitted_post_loader_post_load, cb_data);
+					loader.on("complete", this_private.on_submitted_post_loader_complete, cb_data);
+				},
+				on_submitted_post_loader_post_load: function (event, cb_data) {
+					// Check if it's the correct thread
+					if (event.post.thread == cb_data.target_thread) {
+						if (event.post_context.is_new) {
+							// New
+							cb_data.new_posts.push(event.post);
+						}
+					}
+				},
+				on_submitted_post_loader_complete: function (event, cb_data) {
+					// Disable events
+					content.off("post_load", this_private.on_submitted_post_loader_post_load);
+
+					// Find post
+					var my_post = null;
+					for (var i = cb_data.new_posts.length - 1; i >= 0; --i) {
+						// Set post
+						if (
+							my_post == null ||
+							this_private.which_post_is_more_accurate.call(cb_data.self, cb_data.submit_data, [my_post, cb_data.new_posts[i]]) == 1
+						) {
+							my_post = cb_data.new_posts[i];
+						}
+					}
+
+					// Error checking
+					if (my_post == null) {
+						// Error
+						this_private.submit_error.call(cb_data.self, {
+							type: "Post Retrieval Error",
+							detail: "Your post could not be found after submission",
+							cooldown: "post_retrieval_error"
+						});
+					}
+					else {
+						// Mark post as "you"
+						content.mark_post_as_me(my_post, cb_data.submit_data, cb_data.password, true);
+						this_private.submit_complete.call(cb_data.self, cb_data.submit_data, false);
+
+						// Message
+						new xch.Message({
+							type: "okay",
+							title: "Post Successful",
+							text: "Your post was successfully submitted"
+						});
+
+						// Go to thread
+						if (cb_data.redirect_to_thread) {
 							// Go to thread
-							if (redirect_to_thread) {
-								// Go to thread
-								location.go_to_new(
+							location.go_to_new(
+								info.create_url.to_post(my_post.thread.board, my_post.thread.id, my_post.id)
+							);
+						}
+						else {
+							if (cb_data.self.settings.posting.highlight_after_post) {
+								// Highlight
+								location.go_to(
 									info.create_url.to_post(my_post.thread.board, my_post.thread.id, my_post.id)
 								);
 							}
-							else {
-								if (self.settings.posting.highlight_after_post) {
-									// Highlight
-									location.go_to(
-										info.create_url.to_post(my_post.thread.board, my_post.thread.id, my_post.id)
-									);
-								}
-							}
 						}
-					});
+					}
 				},
 
 				change_fields_readonly: function (readonly) {
@@ -4980,6 +5055,15 @@ var xch = (function () {
 					}
 
 					return fd;
+				},
+
+				on_target_selector_option_click: function (event) {
+					event.data.callback_data.self.set_target(event.data.callback_data.thread);
+					event.data.option.menu.close();
+					return false;
+				},
+				on_target_selector_close: function (event, self) {
+					self.target_selector = null;
 				}
 
 			};
@@ -5121,15 +5205,7 @@ var xch = (function () {
 				},
 				open_target_selector: function () {
 					if (this.target_selector == null) {
-						var self = this;
-
 						// Create thread list
-						var click_event = function (event) {
-							event.data.callback_data.qr.set_target(event.data.callback_data.thread);
-							event.data.option.menu.close();
-							return false;
-						};
-
 						var options = [];
 						if (info.index) {
 							options.push({
@@ -5140,8 +5216,8 @@ var xch = (function () {
 								),
 								on: {
 									click: {
-										callback_data: { qr: this, thread: null },
-										callback: click_event
+										callback_data: { self: this, thread: null },
+										callback: this_private.on_target_selector_option_click
 									}
 								}
 							});
@@ -5156,8 +5232,8 @@ var xch = (function () {
 										),
 										on: {
 											click: {
-												callback_data: { qr: this, thread: content.threads[i] },
-												callback: click_event
+												callback_data: { self: this, thread: content.threads[i] },
+												callback: this_private.on_target_selector_option_click
 											}
 										}
 									});
@@ -5173,8 +5249,8 @@ var xch = (function () {
 								),
 								on: {
 									click: {
-										callback_data: { qr: this, thread: null },
-										callback: click_event
+										callback_data: { self: this, thread: null },
+										callback: this_private.on_target_selector_option_click
 									}
 								}
 							});
@@ -5187,8 +5263,9 @@ var xch = (function () {
 							fixed_z: null,
 							open: "down",
 							on: {
-								close: function (event2) {
-									self.target_selector = null;
+								close: {
+									callback_data: this,
+									callback: this_private.on_target_selector_close
 								}
 							},
 							options: options
@@ -5613,32 +5690,80 @@ var xch = (function () {
 				this_private.update_status_favicon.call(this);
 
 				// Event listeners
-				content.on("thread_new", this.on_content_thread_new = (function (event) {
+				content.on("thread_new", this_private.on_content_thread_new, this);
+				content.on("thread_load", this_private.on_content_thread_load, this);
+				content.on("thread_delete", this_private.on_content_thread_delete, this);
+				content.on("thread_update", this_private.on_content_thread_update, this);
+				content.on("post_load", this_private.on_content_post_load, this);
+				content.on("post_delete", this_private.on_content_post_delete, this);
+
+				var data = { self: this, timer_short: null, timer_long: null };
+				$(window).on("scroll", data, this_private.on_window_scroll);
+
+				communication.cross_tab_on("updater_save", this_private.on_cross_tab_save, this);
+			};
+
+			var this_private = {
+
+				load_all: function () {
+					// Load all settings
+					this_private.load_position.call(this, false);
+				},
+				load_position: function (apply) {
+					var pos = xch.site_get_value("updater_position", this.position);
+					if (pos !== this.position) {
+						var in_header = this.position.in_header;
+
+						xch.merge_settings(pos, this.position, false);
+
+						if (apply) {
+							if (this.position.in_header != in_header) {
+								this.position.in_header = in_header;
+								this.set_in_header(!in_header, true, true);
+							}
+							this.set_position(this.position.x, this.position.y, true, true);
+						}
+					}
+				},
+				save_position: function () {
+					xch.site_set_value("updater_position", this.position);
+
+					communication.cross_tab_trigger("updater_save", {
+						value: "position"
+					});
+				},
+
+				on_cross_tab_save: function (event, self) {
+					if (event.value == "position") {
+						this_private.load_position.call(self, true);
+					}
+				},
+
+				on_content_thread_new: function (event, self) {
 					this_private.set_thread.call(self, event.thread);
-					content.off("thread_new", self.on_content_thread_new);
-					self.on_content_thread_new = null;
-				}));
-				content.on("thread_load", function (event) {
+					content.off("thread_new", this_private.on_content_thread_new);
+				},
+				on_content_thread_load: function (event) {
 					if (event.thread == self.thread && self.first_load) {
 						// Completed
 						this_private.thread_loaded_first.call(self);
 					}
-				});
-				content.on("thread_delete", function (event) {
+				},
+				on_content_thread_delete: function (event, self) {
 					if (event.thread == self.thread) {
 						// 404
 						this_private.thread_deleted.call(self);
 					}
-				});
-				content.on("thread_update", function (event) {
+				},
+				on_content_thread_update: function (event, self) {
 					if (event.thread == self.thread) {
 						self.thread_changed = true;
 
 						// Thread has been updated
 						this_private.thread_updated.call(self, event.state_old);
 					}
-				});
-				content.on("post_load", function (event) {
+				},
+				on_content_post_load: function (event, self) {
 					if (event.post.thread == self.thread) {
 						if (event.post_context.is_new) {
 							self.thread_changed = true;
@@ -5683,56 +5808,12 @@ var xch = (function () {
 							}
 						}
 					}
-				});
-				content.on("post_delete", function (event) {
+				},
+				on_content_post_delete: function (event, self) {
 					if (event.post.thread == self.thread) {
 						self.thread_changed = true;
 						this_private.increment_value.call(self, self.totals, false, -1);
 						this_private.increment_value.call(self, self.change.removed, false, 1);
-					}
-				});
-
-				var data = { self: this, timer_short: null, timer_long: null };
-				$(window).on("scroll", data, this_private.on_window_scroll);
-
-				communication.cross_tab_on("updater_save", function (event, self) {
-					this_private.on_cross_tab_save.call(self, event);
-				}, this);
-			};
-
-			var this_private = {
-
-				load_all: function () {
-					// Load all settings
-					this_private.load_position.call(this, false);
-				},
-				load_position: function (apply) {
-					var pos = xch.site_get_value("updater_position", this.position);
-					if (pos !== this.position) {
-						var in_header = this.position.in_header;
-
-						xch.merge_settings(pos, this.position, false);
-
-						if (apply) {
-							if (this.position.in_header != in_header) {
-								this.position.in_header = in_header;
-								this.set_in_header(!in_header, true, true);
-							}
-							this.set_position(this.position.x, this.position.y, true, true);
-						}
-					}
-				},
-				save_position: function () {
-					xch.site_set_value("updater_position", this.position);
-
-					communication.cross_tab_trigger("updater_save", {
-						value: "position"
-					});
-				},
-
-				on_cross_tab_save: function (event) {
-					if (event.value == "position") {
-						this_private.load_position.call(this, true);
 					}
 				},
 
@@ -5968,7 +6049,7 @@ var xch = (function () {
 				},
 				thread_deleted: function () {
 					// Disable
-					this_private.disable.call(this);
+					this_private.disable_auto.call(this);
 					this_private.disallow_auto.call(this);
 
 					// Signal 404'd
@@ -5986,7 +6067,7 @@ var xch = (function () {
 					if (state_old.locked != this.thread.locked) {
 						if (this.thread.locked) {
 							// Disable
-							this_private.disable.call(this);
+							this_private.disable_auto.call(this);
 							this_private.disallow_auto.call(this);
 
 							// Message
@@ -6784,8 +6865,6 @@ var xch = (function () {
 
 				this.source = null;
 
-				this.content_events = null;
-
 				this.events = {
 					load: [], // ajax-load
 					progress: [], // take into account ajax-progress and parsing-progress
@@ -6804,16 +6883,13 @@ var xch = (function () {
 			var this_private = {
 
 				html_load: function (html) {
-					var self = this;
-
 					// Status
 					this_private.status_change.call(this, Loader.status.PARSE_WAITING);
 
 					// Create context
-					var meta = null;
-					var info = new xch.Information(meta, html);
+					var new_info = new xch.Information(null, html);
 					this.context = new xch.Content.Context({
-						info: info,
+						info: new_info,
 						html: html,
 						post_queue: (xch.settings.parsing_group.use_single ? content.main_context.post_queue : null),
 						html_target: content.main_context.html,
@@ -6822,77 +6898,12 @@ var xch = (function () {
 						loader: this
 					});
 
-					// Events
-					this.content_events = {
-						thread_ready: function (event) {
-							if (event.context != self.context) return;
-
-							// Increment total post count
-							self.posts_total += event.thread_context.posts_total;
-
-							// Trigger thread_new event
-							this_private.trigger.call(self, "thread_ready", {
-								thread: event.thread
-							});
-						},
-						thread_load: function (event) {
-							if (event.context != self.context) return;
-
-							// Trigger thread_new event
-							this_private.trigger.call(self, "thread_load", {
-								thread: event.thread
-							});
-						},
-						thread_delete: function (event) {
-							if (event.context != self.context) return;
-
-							// Trigger thread_new event
-							this_private.trigger.call(self, "thread_delete", {
-								thread: event.thread
-							});
-						},
-						post_load: function (event) {
-							if (event.context != self.context) return;
-
-							// Change status
-							if (self.status = Loader.status.PARSE_WAITING) {
-								this_private.status_change.call(self, Loader.status.PARSING);
-							}
-
-							// Increment posts loaded
-							self.posts_loaded += 1;
-
-							// Progress
-							self.parse_progress = self.posts_loaded / self.posts_total;
-							this_private.trigger.call(self, "progress", {
-								type: "parse",
-								ratio: self.parse_progress,
-								loaded: self.posts_loaded,
-								total: self.posts_total
-							});
-							// Trigger event
-							this_private.trigger.call(self, "post_load", {
-								post: event.post
-							});
-						},
-						complete: function (event) {
-							if (event.context != self.context) return;
-
-							// Event
-							this_private.trigger.call(self, "complete", {
-								good: true
-							});
-							// Status
-							this_private.status_change.call(self, Loader.status.COMPLETE);
-							// Complete
-							this_private.complete.call(self);
-						}
-					};
-
 					// Enable events
-					for (var event in this.content_events) {
-						content.on(event, this.content_events[event]);
-					}
+					content.on("thread_ready", this_private.on_thread_ready, this);
+					content.on("thread_load", this_private.on_thread_load, this);
+					content.on("thread_delete", this_private.on_thread_delete, this);
+					content.on("post_load", this_private.on_post_load, this);
+					content.on("complete", this_private.on_complete, this);
 
 					// Parse
 					content.parse(this.context);
@@ -6916,20 +6927,84 @@ var xch = (function () {
 					}
 
 					// Clear events
-					for (var event in this.events) {
-						this.events[event] = [];
-					}
+					this.events = [];
 
 					// Disable event listening
-					if (this.content_events != null) {
-						for (var event in this.content_events) {
-							content.off(event, this.content_events[event]);
-						}
-						this.content_events = null;
+					if (this.context != null) {
+						content.off("thread_ready", this_private.on_thread_ready);
+						content.off("thread_load", this_private.on_thread_load);
+						content.off("thread_delete", this_private.on_thread_delete);
+						content.off("post_load", this_private.on_post_load);
+						content.off("complete", this_private.on_complete);
+						this.context = null;
 					}
 
 					// Not running
 					this.new_content = null;
+				},
+
+				on_thread_ready: function (event, self) {
+					if (event.context != self.context) return;
+
+					// Increment total post count
+					self.posts_total += event.thread_context.posts_total;
+
+					// Trigger thread_new event
+					this_private.trigger.call(self, "thread_ready", {
+						thread: event.thread
+					});
+				},
+				on_thread_load: function (event, self) {
+					if (event.context != self.context) return;
+
+					// Trigger thread_new event
+					this_private.trigger.call(self, "thread_load", {
+						thread: event.thread
+					});
+				},
+				on_thread_delete: function (event, self) {
+					if (event.context != self.context) return;
+
+					// Trigger thread_new event
+					this_private.trigger.call(self, "thread_delete", {
+						thread: event.thread
+					});
+				},
+				on_post_load: function (event, self) {
+					if (event.context != self.context) return;
+
+					// Change status
+					if (self.status = Loader.status.PARSE_WAITING) {
+						this_private.status_change.call(self, Loader.status.PARSING);
+					}
+
+					// Increment posts loaded
+					self.posts_loaded += 1;
+
+					// Progress
+					self.parse_progress = self.posts_loaded / self.posts_total;
+					this_private.trigger.call(self, "progress", {
+						type: "parse",
+						ratio: self.parse_progress,
+						loaded: self.posts_loaded,
+						total: self.posts_total
+					});
+					// Trigger event
+					this_private.trigger.call(self, "post_load", {
+						post: event.post
+					});
+				},
+				on_complete: function (event, self) {
+					if (event.context != self.context) return;
+
+					// Event
+					this_private.trigger.call(self, "complete", {
+						good: true
+					});
+					// Status
+					this_private.status_change.call(self, Loader.status.COMPLETE);
+					// Complete
+					this_private.complete.call(self);
 				},
 
 				ajax_on_load: function (event) {
@@ -6953,22 +7028,39 @@ var xch = (function () {
 						}
 						else {
 							html = event.data.loader.source.html;
+							event.data.loader.source.html = null;
 						}
 						// Check
 						if (html.length > 0) {
-							// Okay
-							this_private.trigger.call(event.data.loader, "load", {
-								html: html
-							});
-							// Parse
-							this_private.html_load.call(event.data.loader, html);
+							var error;
+							if ((error = content.check_html_for_error(html)) !== null) {
+								// Remove last "."
+								if (error[error.length - 1] == "." && error.substr(-2) != "..") {
+									error = error.substr(0, error.length - 1);
+								}
+
+								// Response error
+								this_private.trigger.call(event.data.loader, "error", {
+									type: "response",
+									reason: error
+								});
+								this_private.status_change.call(event.data.loader, Loader.status.ERROR);
+								this_private.complete.call(event.data.loader);
+							}
+							else {
+								// Okay
+								this_private.trigger.call(event.data.loader, "load", {
+									html: html
+								});
+								// Parse
+								this_private.html_load.call(event.data.loader, html);
+							}
 						}
 						else {
 							// Bad
 							this_private.trigger.call(event.data.loader, "error", {
 								type: "parse",
-								reason: "Could not parse the response",
-								response: event.response
+								reason: "Could not parse the response"
 							});
 							this_private.status_change.call(event.data.loader, Loader.status.ERROR);
 							this_private.complete.call(event.data.loader);
@@ -6985,9 +7077,7 @@ var xch = (function () {
 							// Error
 							this_private.trigger.call(event.data.loader, "error", {
 								type: "status",
-								reason: "Expected ajax status 200, but received " + event.status,
-								status: event.status,
-								status_text: event.status_text
+								reason: "Expected ajax status 200, but received " + event.status
 							});
 
 							this_private.status_change.call(event.data.loader, Loader.status.ERROR);
@@ -7009,9 +7099,7 @@ var xch = (function () {
 					// Error
 					this_private.trigger.call(event.data.loader, "error", {
 						type: "error",
-						reason: "Ajax request error",
-						status: event.status,
-						status_text: event.status_text
+						reason: "Ajax request error"
 					});
 					this_private.status_change.call(event.data.loader, Loader.status.ERROR);
 					this_private.complete.call(event.data.loader);
@@ -7030,7 +7118,7 @@ var xch = (function () {
 					// Trigger an event
 					var e = this.events[event];
 					for (var i = 0; i < e.length; ++i) {
-						e[i].call(this, data, event);
+						e[i][0].call(this, data, e[i][1], event);
 					}
 				},
 
@@ -7082,9 +7170,9 @@ var xch = (function () {
 				running: function () {
 					return (this.status != Loader.status.NOT_RUNNING);
 				},
-				on: function (event, callback) {
+				on: function (event, callback, callback_data) {
 					if (event in this.events) {
-						this.events[event].push(callback);
+						this.events[event].push([callback, callback_data]);
 					}
 				},
 				off: function (event, callback) {
@@ -7092,7 +7180,7 @@ var xch = (function () {
 						// Check for callback
 						var e = this.events[event];
 						for (var i = 0; i < e.length; ++i) {
-							if (e[i] == callback) {
+							if (e[i][0] == callback) {
 								// Remove
 								e.splice(i, 1);
 								break;
@@ -7747,26 +7835,29 @@ var xch = (function () {
 					this.set_position((area.left + (area.width - w) / 2), (area.top + (area.height - h) / 2), true);
 
 					// Events
-					var data = { popup: this };
-					var cancel_event = function (event) {
-						return (event.which == 1);
-					};
-					close.on("mousedown", cancel_event)
-					.on("click", data, function (event) {
-						if (event.which != 1) return true;
-
-						event.data.popup.close();
-
-						return false;
-					});
+					var data = { self: this };
+					close.on("mousedown", this_private.cancel_event)
+					.on("click", data, this_private.on_close_click);
 					title_bar.on("mousedown", data, this_private.on_grabber_mousedown);
+				},
+
+				cancel_event: function (event) {
+					return (event.which == 1);
+				},
+
+				on_close_click: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.self.close();
+
+					return false;
 				},
 
 				on_grabber_mousedown: function (event) {
 					if (event.which != 1) return true;
 
 					// Stop
-					var moving = event.data.popup.moving;
+					var moving = event.data.self.moving;
 					if (moving.active) {
 						this_private.move_stop.call(event.data.messenger);
 					}
@@ -7779,7 +7870,7 @@ var xch = (function () {
 
 					moving.active = true;
 
-					var o = event.data.popup.container.offset();
+					var o = event.data.self.container.offset();
 					moving.offset.x = event.pageX - o.left;
 					moving.offset.y = event.pageY - o.top;
 
@@ -7788,14 +7879,14 @@ var xch = (function () {
 				},
 				on_window_mousemove_scroll: function (event) {
 					var win = $(window);
-					var off = event.data.popup.moving.offset;
+					var off = event.data.self.moving.offset;
 					var x = event.pageX - win.scrollLeft() - off.x;
 					var y = event.pageY - win.scrollTop() - off.y;
 
-					event.data.popup.set_position(x, y, false);
+					event.data.self.set_position(x, y, false);
 				},
 				on_window_mouseup: function (event) {
-					this_private.move_stop.call(event.data.popup);
+					this_private.move_stop.call(event.data.self);
 				},
 				move_stop: function () {
 					if (this.moving.active) {
@@ -8074,6 +8165,21 @@ var xch = (function () {
 					}
 
 					// Timeout init
+					this_private.init_timeouts.call(this);
+
+					// Events
+					var ev_data = { self: this };
+					this_private.register_event.call(this, this.container, "mouseenter", this_private.on_container_mouseenter, ev_data);
+					this_private.register_event.call(this, this.container, "mouseleave", this_private.on_container_mouseleave, ev_data);
+					this_private.register_event.call(this, this.container, "click", this_private.on_container_click, ev_data);
+					this_private.register_event.call(this, $(document), "click", this_private.on_document_click, ev_data);
+					this_private.register_event.call(this, $(window), "scroll", this_private.on_window_scroll, ev_data);
+					this_private.register_event.call(this, $(window), "resize", this_private.on_window_resize, ev_data);
+				},
+
+				init_timeouts: function () {
+					var self = this;
+
 					setTimeout(function () {
 						self.can_click_to_close = true;
 					}, 50);
@@ -8083,47 +8189,47 @@ var xch = (function () {
 							self.close();
 						}, this.max_idle_time * 1000);
 					}
+				},
 
-					// Events
-					var ev_data = { menu: this };
-					this_private.register_event.call(this, this.container, "mouseenter", function (event) {
-						if (event.data.menu.max_idle_timer !== null) {
-							clearTimeout(event.data.menu.max_idle_timer);
-							event.data.menu.max_idle_timer = null;
-						}
-					}, ev_data);
-					this_private.register_event.call(this, this.container, "mouseleave", function (event) {
-						if (event.data.menu.close_on_mouseleave) event.data.menu.close();
-					}, ev_data);
-					this_private.register_event.call(this, this.container, "click", function (event) {
-						if (event.which != 1) return true;
+				on_container_mouseenter: function (event) {
+					if (event.data.self.max_idle_timer !== null) {
+						clearTimeout(event.data.self.max_idle_timer);
+						event.data.self.max_idle_timer = null;
+					}
+				},
+				on_container_mouseleave: function (event) {
+					if (event.data.self.close_on_mouseleave) event.data.self.close();
+				},
+				on_container_click: function (event) {
+					if (event.which != 1) return true;
 
-						if (event.data.menu.close_timer !== null) {
-							clearTimeout(event.data.menu.close_timer);
-							event.data.menu.close_timer = null;
-						}
+					if (event.data.self.close_timer !== null) {
+						clearTimeout(event.data.self.close_timer);
+						event.data.self.close_timer = null;
+					}
 
-						return false;
-					}, ev_data);
-					this_private.register_event.call(this, $(document), "click", function (event) {
-						if (event.which != 1 || !event.data.menu.can_click_to_close) return true;
+					return false;
+				},
+				on_document_click: function (event) {
+					if (event.which != 1 || !event.data.self.can_click_to_close) return true;
 
-						if (event.data.menu.close_timer === null) {
-							var event_data = event.data;
-							event_data.menu.close_timer = setTimeout(function () {
-								event_data.menu.close_timer = null;
-								event_data.menu.close();
-							}, 50);
-						}
-					}, ev_data);
-					this_private.register_event.call(this, $(window), "scroll", function (event) {
-						// TODO : Delay
-						event.data.menu.update();
-					}, ev_data);
-					this_private.register_event.call(this, $(window), "resize", function (event) {
-						// TODO : Delay
-						event.data.menu.update();
-					}, ev_data);
+					if (event.data.self.close_timer === null) {
+						this_private.activate_close_timer.call(event.data.self);
+					}
+				},
+				on_window_scroll: function (event) {
+					event.data.self.update();
+				},
+				on_window_resize: function (event) {
+					event.data.self.update();
+				},
+
+				activate_close_timer: function () {
+					var self = this;
+					this.close_timer = setTimeout(function () {
+						self.close_timer = null;
+						self.close();
+					}, 50);
 				},
 
 				register_event: function (object, event, callback, data) {
@@ -8213,13 +8319,13 @@ var xch = (function () {
 					this.fixed = false;
 					var p_parents = this.parent.parents();
 					var z_index = 0;
-					p_parents.each(function () {
-						var me = $(this);
-						if (me.css("position").indexOf("fixed") >= 0) self.fixed = true;
+					for (var i = 0; i < p_parents.length; ++i) {
+						var me = $(p_parents[i]);
+						if (me.css("position").indexOf("fixed") >= 0) this.fixed = true;
 
 						var zi = me.css("z-index");
 						if (zi != "auto") z_index = zi;
-					});
+					}
 					if (this.fixed) this.container.addClass("fixed");
 					else this.container.removeClass("fixed");
 					if (this.use_fixed_z) {
@@ -8569,19 +8675,6 @@ var xch = (function () {
 				constructor: Meta,
 
 				validate: function (html) {
-					// Connection error
-					var connection_error = false;
-					html.find("head>link").each(function () {
-						if (/^chrome:\/\//.test($(this).attr("href") || "")) {
-							connection_error = true;
-							return false;
-						}
-					});
-					if (connection_error) {
-						this.page_code = 0;
-						return false;
-					}
-
 					if (html.find("title:nth-of-type(1)").text() == "404 Not Found") {
 						this.page_code = 404;
 						return false;
@@ -8762,8 +8855,6 @@ var xch = (function () {
 		Content: (function () {
 
 			var Content = function (main_context) {
-				var self = this;
-
 				this.threads = [];
 				this.board_map = {};
 				this.incomplete_references = [];
@@ -8851,38 +8942,22 @@ var xch = (function () {
 				this_private.update_sourcing.call(this);
 
 				// Highlight waiting
-				this.on_post_load_highlight = function (event) {
-					return this_private.on_post_load_highlight.call(self, event);
-				};
-				this.on_complete_highlight = function (event) {
-					return this_private.on_complete_highlight.call(self, event);
-				};
 				this.post_highlight_id_target = -1;
 
 				// Event listening
-				location.on("change", function (event) {
-					return this_private.on_location_change.call(self, event);
-				});
+				location.on("change", this_private.on_location_change);
 
 				// Title update with OP
 				if (!info.index) {
-					this.on_post_load_title_update = function (event) {
-						if (event.post.op) {
-							self.format_title();
-							self.off("post_load", self.on_post_load_title_update);
-						}
-					};
-					this.on("post_load", this.on_post_load_title_update);
+					this.on("post_load", this_private.on_post_load_title_update, this);
 				}
 
+				communication.cross_tab_on("my_posts_change", this_private.on_cross_my_posts_change, this);
+
 				// Initial location test
-				this_private.on_location_change.call(this, {
+				this_private.on_location_change.call(location, {
 					location: location,
 					self_init: true
-				});
-
-				communication.cross_tab_on("my_posts_change", function (event, self) {
-					this_private.on_cross_my_posts_change.call(self, event);
 				}, this);
 			};
 
@@ -8997,15 +9072,15 @@ var xch = (function () {
 					});
 				},
 
-				on_cross_my_posts_change: function (event) {
+				on_cross_my_posts_change: function (event, self) {
 					if (event.add) {
 						// Load
-						this_private.load_my_post_by_id.call(this, event.key, true);
+						this_private.load_my_post_by_id.call(self, event.key, true);
 					}
 					else {
 						// Unmark without save
-						var key_split = this_private.unformat_my_post_key.call(this, event.key);
-						this.unmark_post_as_me(key_split[0], key_split[1], key_split[2], false);
+						var key_split = this_private.unformat_my_post_key.call(self, event.key);
+						self.unmark_post_as_me(key_split[0], key_split[1], key_split[2], false);
 					}
 				},
 
@@ -9040,7 +9115,14 @@ var xch = (function () {
 					// Nothing
 				},
 
-				on_location_change: function (event) {
+				on_post_load_title_update: function (event, self) {
+					if (event.post.op) {
+						self.format_title();
+						self.off("post_load", this_private.on_post_load_title_update);
+					}
+				},
+
+				on_location_change: function (event, self) {
 					if (event.location.fragment !== null && /[0-9]+/.test(event.location.fragment)) {
 						// Highlight post with this id
 						var post_id = parseInt(event.location.fragment) || 0;
@@ -9048,14 +9130,14 @@ var xch = (function () {
 						// Find posts
 						if ("self_init" in event) {
 							// Set highlighting target
-							this.post_highlight_id_target = post_id;
-							this.on("post_load", this.on_post_load_highlight);
-							this.on("complete", this.on_complete_highlight);
+							self.post_highlight_id_target = post_id;
+							self.on("post_load", this_private.on_post_load_highlight, self);
+							self.on("complete", this_private.on_complete_highlight, self);
 						}
 						else {
-							var c = this.main_context.html.find('.thread>.post_container[post_id="' + post_id + '"]');
+							var c = self.main_context.html.find('.thread>.post_container[post_id="' + post_id + '"]');
 							if (c.length > 0) {
-								this.main_context.html.find(".thread>.post_container.highlighted").removeClass("highlighted");
+								self.main_context.html.find(".thread>.post_container.highlighted").removeClass("highlighted");
 								c = c.first();
 								c.addClass("highlighted");
 								if (!event.is_new) {
@@ -9068,32 +9150,32 @@ var xch = (function () {
 					else {
 						if (!("self_init" in event)) {
 							// Un-highlight
-							this.main_context.html.find(".thread>.post_container.highlighted").removeClass("highlighted");
+							self.main_context.html.find(".thread>.post_container.highlighted").removeClass("highlighted");
 						}
 					}
 				},
-				on_post_load_highlight: function (event) {
-					if (event.context != this.main_context) return;
-					if (event.post.id == this.post_highlight_id_target) {
+				on_post_load_highlight: function (event, self) {
+					if (event.context != self.main_context) return;
+					if (event.post.id == self.post_highlight_id_target) {
 						// Un-highlight others
-						this.main_context.html.find(".thread>.post_container.highlighted").removeClass("highlighted");
+						self.main_context.html.find(".thread>.post_container.highlighted").removeClass("highlighted");
 						// Highlight
 						var c = event.post.instances[0].container;
 						c.addClass("highlighted");
 						// Scroll to
 						event.post.scroll_to(c);
 						// Disable events
-						this.post_highlight_id_target = -1;
-						this.off("post_load", this.on_post_load_highlight);
-						this.off("complete", this.on_complete_highlight);
+						self.post_highlight_id_target = -1;
+						self.off("post_load", this_private.on_post_load_highlight);
+						self.off("complete", this_private.on_complete_highlight);
 					}
 				},
-				on_complete_highlight: function (event) {
-					if (event.context != this.main_context) return;
+				on_complete_highlight: function (event, self) {
+					if (event.context != self.main_context) return;
 					// Disable events
-					this.post_highlight_id_target = -1;
-					this.off("post_load", this.on_post_load_highlight);
-					this.off("complete", this.on_complete_highlight);
+					self.post_highlight_id_target = -1;
+					self.off("post_load", this_private.on_post_load_highlight);
+					self.off("complete", this_private.on_complete_highlight);
 				},
 
 				update_sourcing: function () {
@@ -9723,6 +9805,24 @@ var xch = (function () {
 							)
 						});
 					}
+				},
+
+				delete_post_image_action: function (post) {
+					this.delete_post_image(post, true);
+					return true;
+				},
+				delete_post_action: function (post) {
+					this.delete_post(post, true);
+					return true;
+				},
+				report_post_action: function (post, input_val) {
+					if (input_val.trim().length == 0) return false;
+					this.report_post(post, input_val, true);
+					return true;
+				},
+				mark_post_as_me_ask_action: function (data) {
+					this.mark_post_as_me_ask(data.post, data.mark, true);
+					return true;
 				}
 
 			};
@@ -9787,13 +9887,13 @@ var xch = (function () {
 
 					// Find threads
 					var html_threads = context.html.find('div[id^="thread_"]');
-					html_threads.each(function () {
-						var obj = $(this), existing, thread_context;
+					for (var i = 0; i < html_threads.length; ++i) {
+						var obj = $(html_threads[i]), existing, thread_context;
 						// Append new thread
 						var thread = new xch.Thread();
 						thread.init(obj, context);
 						// Check for duplicate
-						if (context.is_new || (existing = self.get_thread(thread.id, thread.board)) == null) {
+						if (context.is_new || (existing = this.get_thread(thread.id, thread.board)) == null) {
 							// New
 							thread_context = [
 								thread,
@@ -9804,7 +9904,7 @@ var xch = (function () {
 									posts_total: 0
 								}
 							];
-							self.thread_new(thread, context, thread_context[2]);
+							this.thread_new(thread, context, thread_context[2]);
 						}
 						else {
 							// Update
@@ -9818,12 +9918,12 @@ var xch = (function () {
 								}
 							];
 							// Trigger event
-							self.thread_new(existing, context, thread_context[2]);
+							this.thread_new(existing, context, thread_context[2]);
 							// Update any settings
 							existing.update_with(thread, context, thread_context[2]);
 						}
 						parse_queue.push(thread_context);
-					});
+					}
 
 					// Start thread parsing
 					context.threads_total = parse_queue.length;
@@ -9873,6 +9973,7 @@ var xch = (function () {
 				thread_loaded: function (thread, context, thread_context) {
 					// Dead posts
 					var i, j, m, n;
+					/*!debug!*/var dead_count = 0;
 					for (i = 0, m = thread.posts.length, n = thread_context.posts_loaded.length; i < m; ++i) {
 						// Skip if already deleted
 						if (thread.posts[i].deleted) continue;
@@ -9884,6 +9985,7 @@ var xch = (function () {
 
 						// Deleted
 						if (j == n) {
+							/*!debug!*/++dead_count;
 							// Dead post
 							thread.posts[i].mark_as_dead(true);
 							// Event
@@ -9894,6 +9996,7 @@ var xch = (function () {
 							});
 						}
 					}
+					/*!debug!*/if (dead_count > 0) {console.log(context.html.html());}
 
 					// Forwards dead post checking
 					for (i = 0, j = this.incomplete_references.length; i < j; ++i) {
@@ -10050,8 +10153,13 @@ var xch = (function () {
 					/*!debug!*/assert(e, "Bad event [" + event + "]");
 					e.triggering = true;
 					for (var i = 0, j = e.callbacks.length; i < j; ++i) {
-						/*!debug!*/assert(e.callbacks[i], "Bad event in [" + event + "]; " + i + "/" + j+"; "+e.callbacks[i]);
+						/*!debug!*/assert(e.callbacks[i], "Bad event in [" + event + "]; " + i + "/" + j+"; "+e.callbacks[i][0].toString());
+						/*!debug!*/try {
 						e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
+						/*!debug!*/}
+						/*!debug!*/catch (err) {
+						/*!debug!*/	assert(false, "Bad event in [" + event + "] (" + err + "); " + i + "/" + j+"; "+e.callbacks[i][0].toString());
+						/*!debug!*/}
 					}
 					e.triggering = false;
 					if (e.removals != null) {
@@ -10150,10 +10258,7 @@ var xch = (function () {
 							null,
 							"Deleting Image",
 							"Are you sure you want to delete the image of >>" + post.id + "?",
-							function (post) {
-								this.delete_post_image(post, true);
-								return true;
-							},
+							this_private.delete_post_image_action,
 							post
 						);
 					}
@@ -10171,10 +10276,7 @@ var xch = (function () {
 							null,
 							"Deleting Post",
 							"Are you sure you want to delete >>" + post.id + "?",
-							function (post) {
-								this.delete_post(post, true);
-								return true;
-							},
+							this_private.delete_post_action,
 							post
 						);
 					}
@@ -10192,11 +10294,7 @@ var xch = (function () {
 							reason || "",
 							"Reporting Post",
 							"Enter a reason why you're reporting >>" + post.id + ":",
-							function (post, input_val) {
-								if (input_val.trim().length == 0) return false;
-								this.report_post(post, input_val, true);
-								return true;
-							},
+							this_private.report_post_action,
 							post
 						);
 					}
@@ -10234,10 +10332,7 @@ var xch = (function () {
 							(mark ? "Mark" : "Unmark") + " Post",
 							"Are you sure you want to " + (mark ? "mark" : "unmark") + " >>" + post.id + " as yours?",
 							(mark ? "Mark" : "Unmark"),
-							function (data) {
-								this.mark_post_as_me_ask(data.post, data.mark, true);
-								return true;
-							},
+							this_private.mark_post_as_me_ask_action,
 							{
 								post: post,
 								mark: mark
@@ -10301,12 +10396,12 @@ var xch = (function () {
 				check_html_for_error: function (html) {
 					if ((html.find("title").html() || "").toLowerCase().trim() == "error") {
 						var error = false;
-						html.find("header>h1").each(function () {
-							if (($(this).html() || "").toLowerCase().trim() == "error") {
+						var h1s = html.find("header>h1");
+						for (var i = 0; i < h1s.length; ++i) {
+							if (($(h1s[i]).html() || "").toLowerCase().trim() == "error") {
 								error = true;
-								return false;
 							}
-						});
+						}
 						if (error) {
 							error = html.find("div>h2");
 							if (error.length > 0) {
@@ -10317,6 +10412,9 @@ var xch = (function () {
 							}
 							return error;
 						}
+					}
+					if (html.find("body>header").length == 0 || html.find("body>footer").length == 0) {
+						return "Document not fully loaded.";
 					}
 					return null;
 				},
@@ -10423,14 +10521,16 @@ var xch = (function () {
 					this.id = parseInt((intro.find(".post_no:nth-of-type(2)").html() || "").trim()) || 0;
 
 					// Icons
-					intro.find(".icon").each(function () {
-						if ($(this).hasClass("icon-pushpin")) {
-							self.sticky = true;
+					var icons = intro.find(".icon");
+					for (var i = 0; i < icons.length; ++i) {
+						var icon = $(icons[i]);
+						if (icon.hasClass("icon-pushpin")) {
+							this.sticky = true;
 						}
-						else if ($(this).hasClass("icon-lock")) {
-							self.locked = true;
+						else if (icon.hasClass("icon-lock")) {
+							this.locked = true;
 						}
-					});
+					}
 
 					// Container
 					this.container = html;
@@ -10450,15 +10550,15 @@ var xch = (function () {
 
 					// Create posts
 					var html_posts = html.find("div.post");
-					html_posts.each(function () {
-						var obj = $(this), existing;
+					for (var i = 0; i < html_posts.length; ++i) {
+						var obj = $(html_posts[i]), existing;
 						// Append
-						var post = new xch.Post(self);
+						var post = new xch.Post(this);
 						post.init(obj, context);
 						// Check for duplicate
-						if (thread_context.is_new || (existing = self.get_post(post.id)) == null) {
+						if (thread_context.is_new || (existing = this.get_post(post.id)) == null) {
 							// New
-							self.add_post(post, context, thread_context);
+							this.add_post(post, context, thread_context);
 							parse_queue_new.push([
 								post,
 								obj,
@@ -10478,7 +10578,7 @@ var xch = (function () {
 							]);
 						}
 						++parse_queue_length;
-					});
+					}
 
 					// Set
 					thread_context.posts_total = parse_queue_length;
@@ -10954,24 +11054,24 @@ var xch = (function () {
 						data.object.parent().removeClass("shrink").addClass("expand");
 					}
 				},
-				open_image_preview: function (obj, event, timeout) {
+				open_image_preview: function (obj, event_data, timeout) {
 					// Spawn function
 					var fcn = function () {
-						event.data.open_timer = null;
-						if (event.data.preview == null) {
+						event_data.open_timer = null;
+						if (event_data.preview == null) {
 							// Create new
-							event.data.preview = event.data.image.create_preview(obj, event.data);
+							event_data.preview = event_data.image.create_preview(obj, event_data);
 							// Add
-							content.floating_container.append(event.data.preview);
+							content.floating_container.append(event_data.preview);
 						}
 					};
 					// Timeout
-					if (event.data.open_timer !== null) {
-						clearTimeout(event.data.open_timer);
+					if (event_data.open_timer !== null) {
+						clearTimeout(event_data.open_timer);
 					}
 					// Time
 					if (timeout > 0) {
-						event.data.open_timer = setTimeout(fcn, timeout * 1000);
+						event_data.open_timer = setTimeout(fcn, timeout * 1000);
 					}
 					else {
 						fcn();
@@ -11434,7 +11534,7 @@ var xch = (function () {
 						if (opt == "toggle") {
 							if (event.data.preview == null) {
 								// Open
-								events.open_image_preview.call(this, obj, event, 0);
+								events.open_image_preview.call(this, obj, event.data, 0);
 							}
 							else {
 								// Close
@@ -11468,7 +11568,7 @@ var xch = (function () {
 								var t = xch.settings.image_preview;
 								t = (event.data.image.spoiler ? t.open_timeout_spoiler : t.open_timeout);
 								// Spawn
-								events.open_image_preview.call(this, obj, event, t);
+								events.open_image_preview.call(this, obj, event.data, t);
 							}
 						}
 						else {
@@ -11923,7 +12023,7 @@ var xch = (function () {
 					// Replace
 					if (replace_old_style) {
 						// Remove old stuff
-						var p;
+						var p, par, cont;
 						if (this.op) {
 							if ((p = instance.container.prev()).length > 0 && (p.prop("tagName") == "A" || p.prop("tagName") == "IMG")) {
 								p.remove();
@@ -11940,8 +12040,20 @@ var xch = (function () {
 						}
 
 						// Replace and remove old
-						instance.container.after(outer);
-						instance.container.remove();
+						cont = instance.container[0];
+						par = cont.parentNode;
+						if (par != null) {
+							var ns = cont.nextSibling;
+
+							par.removeChild(cont);
+
+							if (ns == null) {
+								par.appendChild(outer[0]);
+							}
+							else {
+								par.insertBefore(outer[0], ns);
+							}
+						}
 					}
 					// New
 					instance.container = outer;
@@ -11950,27 +12062,28 @@ var xch = (function () {
 					var self = this;
 
 					// Greentext
-					comment.find(".quote").each(function () {
+					var quotes = comment.find(".quote");
+					for (var i = 0; i < quotes.length; ++i) {
 						// Dead links
-						var obj = $(this);
+						var obj = $(quotes[i]);
 						var c = obj.contents();
 						if (c.length == 1) {
 							c = /^>>(?:>\/(\w+)\/)?([0-9]+)$/i.exec(c.text());
 							if (c) {
 								// Set
-								var board = c[1] || self.thread.board;
+								var board = c[1] || this.thread.board;
 								var post_id = parseInt(c[2]);
 								var thread_id = null;
 
 								// Add reference
-								var rr, ref = self.add_reference(board, thread_id, post_id);
+								var rr, ref = this.add_reference(board, thread_id, post_id);
 
 								// Make a resurrected quote
 								obj.after(
 									(rr = style.e("a", "post_reference resurrected"))
 									.attr("board", board)
 									.attr("post", post_id)
-									.attr("href", info.create_url.to_post(board, self.thread.id, post_id))
+									.attr("href", info.create_url.to_post(board, this.thread.id, post_id))
 								);
 								style.format_reference_style(rr, ref);
 
@@ -11982,15 +12095,16 @@ var xch = (function () {
 
 						// Add class
 						style.set_class(obj, "quote");
-					});
+					}
 
 					// Spoilers
 					style.set_class(comment.find(".spoiler"), "spoiler");
 
 					// Links
+					var links = comment.find("a");
 					var re = /\/\/boards\.38chan\.net\/(\w+)\/res\/([0-9]+)\.html#([0-9]+)/i;
-					comment.find("a").each(function () {
-						var obj = $(this);
+					for (var i = 0; i < links.length; ++i) {
+						var obj = $(links[i]);
 						var m = re.exec(obj.attr("href") || "");
 						if (m) {
 							// Reference
@@ -12006,14 +12120,14 @@ var xch = (function () {
 							.attr("post", post_id)
 							.attr("href", info.create_url.to_post(board, thread_id, post_id));
 							// Add reference
-							var ref = self.add_reference(board, thread_id, post_id);
+							var ref = this.add_reference(board, thread_id, post_id);
 							// Re-format
-							style.format_reference_style($(this), ref);
+							style.format_reference_style(obj, ref);
 						}
 						else {
 							obj.addClass("post_link");
 						}
-					});
+					}
 				},
 				stylize_reference: function (ref) {
 					if (ref.target != null && ref.target != ref.origin) {
@@ -12042,6 +12156,54 @@ var xch = (function () {
 							ref.target.prepare_backlink(backlink, ref.target.instances[i]);
 						}
 					}
+				},
+
+				mark_as_dead_update_reference_function: function (ref, target_post) {
+					// Dead
+					ref.target_dead = true;
+				},
+
+				get_comment_plaintext_dom_filter: function (obj, parent) {
+					return (!obj.hasClass("inline post_container"));
+				},
+
+				on_embedded_post_image_load: function (event) {
+					event.data.obj.addClass("loaded");
+				},
+
+				prepare_notification_truncated: function (obj, instance) {
+					var data = { post: this, instance: instance, loader: null, object: obj };
+					data.loader = xch.Loader.get_thread(
+						this.thread.board,
+						this.thread.id,
+						null,
+						{
+							progress: function (event) { return events.notification_loader_progress.call(this, event, data); },
+							post_load: function (event) { return events.notification_loader_post_load.call(this, event, data); },
+							status_change: function (event) { return events.notification_loader_status_change.call(this, event, data); }
+						}
+					);
+					instance.bind_html_event(
+						obj,
+						"click", data, events.notification_truncated_message_click, false
+					);
+				},
+				prepare_notification_omitted: function (obj, instance) {
+					var data = { post: this, instance: instance, loader: null, object: obj };
+					data.loader = xch.Loader.get_thread(
+						this.thread.board,
+						this.thread.id,
+						null,
+						{
+							progress: function (event) { return events.notification_loader_progress.call(this, event, data); },
+							complete: function (event) { return events.notification_loader_complete.call(this, event, data); },
+							status_change: function (event) { return events.notification_loader_status_change.call(this, event, data); }
+						}
+					);
+					instance.bind_html_event(
+						obj,
+						"click", data, events.notification_omitted_posts_click, false
+					);
 				}
 
 			};
@@ -12098,14 +12260,15 @@ var xch = (function () {
 						// Find post comment
 						var c = ref.origin.instances[i].container.children(".post").children(".post_body");
 						// Check each
-						c.find(selector).each(function () {
+						var h_refs = c.find(selector);
+						for (var k = 0; k < h_refs.length; ++k) {
 							// Must have correct parent
-							var obj = $(this);
+							var obj = $(h_refs[k]);
 							if (obj.parents(".post_body")[0] == c[0]) {
 								// Fix reference
 								ref.origin.update_reference_html(ref, obj, ref.origin.instances[i]);
 							}
-						});
+						}
 					}
 				},
 				update_reference_style: function (ref) {
@@ -12170,16 +12333,17 @@ var xch = (function () {
 						var backlink_container = header.add(footer).find(".post_backlinks");
 
 						// Check each
-						backlink_container.find(selector).each(function () {
+						var backlinks = backlink_container.find(selector);
+						for (var k = 0; k < backlinks.length; ++k) {
 							// Check
-							var obj = $(this);
+							var obj = $(backlinks[i]);
 							obj
 							.attr("board", ref.origin.thread.board)
 							.attr("thread", ref.origin.thread.id)
 							.attr("post", ref.origin.id)
 							.attr("href", info.create_url.to_post(ref.origin.thread.board, ref.origin.thread.id, ref.origin.id));
 							style.format_backlink_style(obj, ref);
-						});
+						}
 					}
 				},
 
@@ -12199,16 +12363,17 @@ var xch = (function () {
 				},
 
 				prepare: function (instance) {
-					var self = this, obj, data;
+					var obj, data;
 
 					// Comment
 					this.prepare_comment(instance, null);
 					var p_container = instance.container.children(".post");
 					// Backlinks
-					instance.container.find(".post_backlink").each(function () {
+					var backlinks = instance.container.find(".post_backlink");
+					for (var i = 0; i < backlinks.length; ++i) {
 						// Prepare
-						self.prepare_backlink($(this), instance);
-					});
+						this.prepare_backlink($(backlinks[i]), instance);
+					}
 
 					if (this.image != null) {
 						// Data
@@ -12270,43 +12435,11 @@ var xch = (function () {
 					// Notifications
 					obj = instance.container.find(".post_notification.truncated>.post_notification_message");
 					if (obj.length > 0) {
-						(function (obj, instance) {
-							var data = { post: this, instance: instance, loader: null, object: obj };
-							data.loader = xch.Loader.get_thread(
-								this.thread.board,
-								this.thread.id,
-								null,
-								{
-									progress: function (event) { return events.notification_loader_progress.call(this, event, data); },
-									post_load: function (event) { return events.notification_loader_post_load.call(this, event, data); },
-									status_change: function (event) { return events.notification_loader_status_change.call(this, event, data); }
-								}
-							);
-							instance.bind_html_event(
-								obj,
-								"click", data, events.notification_truncated_message_click, false
-							);
-						}).call(this, obj, instance);
+						this_private.prepare_notification_truncated.call(this, obj, instance);
 					}
 					obj = instance.container.find(".post_notification.omitted>.post_notification_message");
 					if (obj.length > 0) {
-						(function (obj, instance) {
-							var data = { post: this, instance: instance, loader: null, object: obj };
-							data.loader = xch.Loader.get_thread(
-								this.thread.board,
-								this.thread.id,
-								null,
-								{
-									progress: function (event) { return events.notification_loader_progress.call(this, event, data); },
-									complete: function (event) { return events.notification_loader_complete.call(this, event, data); },
-									status_change: function (event) { return events.notification_loader_status_change.call(this, event, data); }
-								}
-							);
-							instance.bind_html_event(
-								obj,
-								"click", data, events.notification_omitted_posts_click, false
-							);
-						}).call(this, obj, instance);
+						this_private.prepare_notification_omitted.call(this, obj, instance);
 					}
 
 					// Trigger prepare
@@ -12315,6 +12448,7 @@ var xch = (function () {
 						post_instance: instance
 					});
 				},
+
 				prepare_comment: function (instance, html) {
 					// Find html
 					if (html == null) {
@@ -12477,10 +12611,7 @@ var xch = (function () {
 					j = this.replies.length;
 					for (i = 0; i < j; ++i) {
 						// Kill
-						this.replies[i].origin.update_reference(this.replies[i], function (ref, target_post) {
-							// Dead
-							ref.target_dead = true;
-						});
+						this.replies[i].origin.update_reference(this.replies[i], this_private.mark_as_dead_update_reference_function);
 
 						// Mark as dead if incomplete
 						content.change_incomplete_to_dead_reference(this.replies[i]);
@@ -12609,6 +12740,7 @@ var xch = (function () {
 					return xch.dom_to_string(tripcode);
 				},
 				get_subject_plaintext: function () {
+					/*!debug!*/assert(this.instances[0], "Bad instance");
 					var s = this.instances[0].container.children(".post").children(".post_header");
 					var subject = s.children(".post_subject");
 
@@ -12621,9 +12753,7 @@ var xch = (function () {
 					if (body.length == 0) body = b.children(".post_body");
 
 					if (body.length == 0) return null;
-					return xch.dom_to_string(body, function (obj, parent) {
-						return (!obj.hasClass("inline post_container"));
-					});
+					return xch.dom_to_string(body, this_private.get_comment_plaintext_dom_filter);
 				},
 
 				update_all_reply_references: function () {
@@ -12686,9 +12816,7 @@ var xch = (function () {
 										(img = style.e("img", "post_image full"))
 										.attr("title", "")
 										.attr("alt", "")
-										.on("load", function (event) {
-											obj.addClass("loaded")
-										})
+										.on("load", { obj: obj }, this_private.on_embedded_post_image_load)
 										.css({
 											width: this.image.width + "px",
 											height: this.image.height + "px"
@@ -12968,36 +13096,6 @@ var xch = (function () {
 					return p;
 				},
 
-				image_preview_mousemove: function (event) {
-					// Positions
-					var me = $(this);
-					var inner = me.children(".image_preview_inner_3");
-					var pos = inner.offset();
-
-					// Percent
-					if (event.pageX !== undefined) {
-						event.data.mouse_last.x = event.pageX;
-						event.data.mouse_last.y = event.pageY;
-					}
-					else {
-						event.pageX = event.data.mouse_last.x;
-						event.pageY = event.data.mouse_last.y;
-					}
-					var p = this_private.get_point_in_bounds(pos.left, pos.top, inner.width(), inner.height(), event.pageX, event.pageY);
-
-					// Size
-					var max = (xch.settings.image_preview.zooming.invert ? 100 : -100);
-					inner.find(".image_preview_size").css({ // Range: -50% to 50% for the zoomed offset
-						left: ((p.x - 0.5) * max).toFixed(2) + "%",
-						top: ((p.y - 0.5) * max).toFixed(2) + "%"
-					});
-
-					// Bounded movement
-					if (event.data.bounding && event.data.bounding.flags) {
-						this_private.bound_image(me, event.data.bounding, pos.left, pos.top, inner.width(), inner.height(), event.pageX, event.pageY, false);
-					}
-				},
-
 				bound_image: function (obj, bounding, left, top, width, height, px, py, init) {
 					var eb = style.image_preview.zoom_padding.out_of_bounds;
 
@@ -13045,6 +13143,90 @@ var xch = (function () {
 							r = r.toFixed(2) + "px";
 						}
 						obj.css("padding-bottom", r);
+					}
+				},
+
+				cancel_event: function (event) {
+					// Cancel left clicks
+					return (event.which != 1);
+				},
+
+				on_preview_mousemove: function (event) {
+					// Positions
+					var event_data = event.data.event_data;
+					var me = $(this);
+					var inner = me.children(".image_preview_inner_3");
+					var pos = inner.offset();
+
+					// Percent
+					if (event.pageX !== undefined) {
+						event_data.mouse_last.x = event.pageX;
+						event_data.mouse_last.y = event.pageY;
+					}
+					else {
+						event.pageX = event_data.mouse_last.x;
+						event.pageY = event_data.mouse_last.y;
+					}
+					var p = this_private.get_point_in_bounds.call(event.data.self, pos.left, pos.top, inner.width(), inner.height(), event.pageX, event.pageY);
+
+					// Size
+					var max = (xch.settings.image_preview.zooming.invert ? 100 : -100);
+					inner.find(".image_preview_size").css({ // Range: -50% to 50% for the zoomed offset
+						left: ((p.x - 0.5) * max).toFixed(2) + "%",
+						top: ((p.y - 0.5) * max).toFixed(2) + "%"
+					});
+
+					// Bounded movement
+					if (event_data.bounding && event_data.bounding.flags) {
+						this_private.bound_image.call(event.data.self, me, event_data.bounding, pos.left, pos.top, inner.width(), inner.height(), event.pageX, event.pageY, false);
+					}
+				},
+				on_preview_mouseenter: function (event) {
+					event.data.self.close_preview_cancel(event.data.event_data);
+				},
+				on_preview_mouseleave: function (event) {
+					event.data.self.close_preview(event.data.event_data);
+				},
+				on_preview_mousescroll: function (event) {
+					// Zoom in/out
+					var delta = Math.max(-1, Math.min(1, (event.originalEvent.wheelDelta || -event.originalEvent.detail || 0)));
+					this_private.set_preview_zoom.call(event.data.self, event.data.event_data.zoom + delta, event.data.obj, event.data.event_data, event);
+
+					// Ignore event
+					return false;
+				},
+				on_preview_click: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.self.destroy_preview(event.data.event_data);
+				},
+
+				on_preview_image_load: function (event) {
+					// Hide thumbnail
+					event.data.thumbnail.addClass("hidden");
+				},
+				on_preview_image_error: function (event) {
+					// Error message
+					$(this).addClass("hidden");
+					event.data.thumbnail.removeClass("hidden").addClass("main");
+					event.data.image_container.children(".info").prepend(
+						style.e("span", "error").text("Error loading image")
+					);
+				},
+
+				set_preview_zoom: function (zoom, obj, event_data, event) {
+					// Check if update is needed
+					if (zoom < 1) zoom = 1;
+					if (zoom == event_data.zoom || event_data.preview == null) return;
+					event_data.zoom = zoom;
+
+					// Change zoom/size
+					this.position_preview(obj, event_data.preview, event_data, true);
+
+					// Update zoom position
+					var outer = event_data.preview.find(".image_preview_inner_2");
+					if (outer.length > 0) {
+						this_private.on_preview_mousemove.call(outer[0], event);
 					}
 				}
 
@@ -13210,49 +13392,23 @@ var xch = (function () {
 					);
 
 					// Events
+					var data = { self: this, event_data: event_data };
 					outer.add(connector)
-					.on("mouseenter", function () {
-						self.close_preview_cancel(event_data);
-					})
-					.on("mouseleave", function () {
-						self.close_preview(event_data);
-					})
-					.on("mousedown", function (event) {
-						// Cancel left clicks
-						return (event.which != 1);
-					});
-					outer.on("mousemove", event_data, this_private.image_preview_mousemove);
+					.on("mouseenter", data, this_private.on_preview_mouseenter)
+					.on("mouseleave", data, this_private.on_preview_mouseleave)
+					.on("mousedown", this_private.cancel_event);
+					outer.on("mousemove", data, this_private.on_preview_mousemove);
 					if (xch.settings.image_preview.close_on_click) {
-						outer.on("click", event_data, function (event) {
-							if (event.which != 1) return true;
-
-							self.destroy_preview(event.data);
-						});
+						outer.on("click", data, this_private.on_preview_click);
 					}
 					if (xch.settings.image_preview.zooming.enabled) {
-						outer.on("mousewheel DOMMouseScroll", event_data, function (event) {
-							// Zoom in/out
-							var delta = Math.max(-1, Math.min(1, (event.originalEvent.wheelDelta || -event.originalEvent.detail || 0)));
-							self.set_preview_zoom(event_data.zoom + delta, obj, event_data, event);
-
-							// Ignore event
-							return false;
-						});
+						outer.on("mousewheel DOMMouseScroll", { self: this, event_data: event_data, obj: obj }, this_private.on_preview_mousescroll);
 					}
 
+					data = { thumbnail: thumbnail, image_container: image_container };
 					image
-					.on("load", function (event) {
-						// Hide thumbnail
-						thumbnail.addClass("hidden");
-					})
-					.on("error", function (event) {
-						// Error message
-						$(this).addClass("hidden");
-						thumbnail.removeClass("hidden").addClass("main");
-						image_container.children(".info").prepend(
-							style.e("span", "error").text("Error loading image")
-						);
-					})
+					.on("load", data, this_private.on_preview_image_load)
+					.on("error", data, this_private.on_preview_image_error);
 
 					// Thumbnail
 					if (this.spoiler) {
@@ -13399,21 +13555,6 @@ var xch = (function () {
 						// Remove
 						event_data.preview.remove();
 						event_data.preview = null;
-					}
-				},
-				set_preview_zoom: function (zoom, obj, event_data, event) {
-					// Check if update is needed
-					if (zoom < 1) zoom = 1;
-					if (zoom == event_data.zoom || event_data.preview == null) return;
-					event_data.zoom = zoom;
-
-					// Change zoom/size
-					this.position_preview(obj, event_data.preview, event_data, true);
-
-					// Update zoom position
-					var outer = event_data.preview.find(".image_preview_inner_2");
-					if (outer.length > 0) {
-						this_private.image_preview_mousemove.call(outer[0], event);
 					}
 				},
 
@@ -14547,12 +14688,12 @@ var xch = (function () {
 
 						//{ Threads
 						"$.thread+$.thread{margin-top:<<thread.separator.height>>px;padding-top:<<thread.separator.size>>px;border-top:<<thread.separator.size>>px <<thread.separator.style>> <<thread.separator.color>>;}\n" +
-						"$.thread{padding:<<thread.padding.top>>px <<thread.padding.right>>px <<thread.padding.bottom>>px <<thread.padding.left>>px;}\n" +
+						"$.thread{padding:<<thread.padding.top>>px <<thread.padding.right>>px <<thread.padding.bottom>>px <<thread.padding.left>>px;<<css.box-sizing>>:border-box;}\n" +
 						//}
 
 						//{ Post
 						"$.post_container+$.post_container{margin-top:<<post.separation>>px;}\n" +
-						"$.post_container{display:block;margin:0px;padding:0px;background-color:transparent;border:0px hidden;max-width:none;position:relative;}\n" +
+						"$.post_container{display:block;max-width:100%;margin:0px;padding:0px;background-color:transparent;border:0px hidden;max-width:none;position:relative;}\n" +
 						"$.post_container.op>$.post{display:block;}\n" +
 						"$.post_container.reply>$.post{background-color:<<post.colors.bg>>;border-width:<<post.border.top>>px <<post.border.right>>px <<post.border.bottom>>px <<post.border.left>>px;border-style:<<post.border.style>>;border-color:<<post.colors.border>>;<<css.border-radius>>:<<post.border.radius.topleft>>px <<post.border.radius.topright>>px <<post.border.radius.bottomright>>px <<post.border.radius.bottomleft>>px;}\n" +
 						"$.post_container.reply.highlighted>$.post{background-color:<<post.colors.bg_hl>>;border-color:<<post.colors.border_hl>>;}\n" +
@@ -14561,7 +14702,7 @@ var xch = (function () {
 						"$.post_container.reply.focused:not(.inline)>$.post{box-shadow:<<!shadow:post.focus.normal.shadow>>;z-index:1;}\n" +
 						"$.post_container.reply.focused.inline>$.post{box-shadow:<<!shadow:post.focus.inline.shadow>>;z-index:1;}\n" +
 
-						"$.post{display:inline-block;margin:0px;padding:0px;max-width:none;color:<<post.colors.text>>;<<!font:post.font>>}\n" +
+						"$.post{max-width:100%;display:inline-block;margin:0px;padding:0px;color:<<post.colors.text>>;<<!font:post.font>>}\n" +
 						//}
 
 						//{ Post header progress
@@ -14583,7 +14724,7 @@ var xch = (function () {
 						//}
 
 						//{ Post subject
-						"$.post_subject{color:<<post.header.subject.color>>;<<!font:post.header.subject.font>>}\n" +
+						"$.post_subject{word-wrap:break-word;color:<<post.header.subject.color>>;<<!font:post.header.subject.font>>}\n" +
 						//}
 
 						//{ Post header deleted indicators
@@ -14599,7 +14740,7 @@ var xch = (function () {
 						"$.post_identity[href]:hover{color:<<post.header.identity.email_colors.text_hover>>;}\n" +
 						"$.post_identity[href]>$.post_identity_name{color:<<post.header.identity.email_colors.text>>;}\n" +
 						"$.post_identity[href]:hover>$.post_identity_name{color:<<post.header.identity.email_colors.text_hover>>;}\n" +
-						"$.post_identity_name{<<!font:post.header.identity.name.font>>;}\n" +
+						"$.post_identity_name{word-wrap:break-word;<<!font:post.header.identity.name.font>>;}\n" +
 						"$.post_identity_tripcode{margin-left:0px;<<!font:post.header.identity.tripcode.font>>}\n" +
 						"$.post_identity_capcode," +
 						"$.post_identity_capcode_indicator{<<!font:post.header.identity.capcode.font>>}\n" +
@@ -14713,7 +14854,7 @@ var xch = (function () {
 
 						//{ Comment
 						"$.post_body," +
-						"$.post_body_full{color:<<post.comment.colors.text>>;display:block;margin:0px;padding:<<post.comment.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px <<post.comment.padding.left>>px;<<!font:post.comment.font>>}\n" +
+						"$.post_body_full{word-wrap:break-word;color:<<post.comment.colors.text>>;display:block;margin:0px;padding:<<post.comment.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px <<post.comment.padding.left>>px;<<!font:post.comment.font>>}\n" +
 						"$.post_container.op>$.post>$.post_body," +
 						"$.post_container.op>$.post>$.post_body_full{padding:<<post.comment.padding.top>>px <<post.comment.padding.right>>px <<post.comment.padding.bottom>>px 0px;}\n" +
 						"$.post_body.full," +
@@ -15003,11 +15144,11 @@ var xch = (function () {
 						"$.popup_content:not(.packed)>$.qr_row+$.qr_row{margin-top:<<popup.separation>>px;}\n" +
 						//}
 
-						//{! Quick reply items
+						//{ Quick reply items
 						"$.qr_row.grab{cursor:move;}\n" +
 
 						"$.qr_submit{cursor:pointer;width:100%;display:block;text-align:center;}\n" +
-						"$.qr_submit{background:transparent;border:0px hidden;<<css.box-sizing>>:border-box;padding:0px;margin:0px;}\n" +
+						"$.popup_button.qr_submit{background:transparent;border:0px hidden;<<css.box-sizing>>:border-box;padding:0px;margin:0px;}\n" +
 						"$.qr_submit:active{}\n" +
 						"$.qr_submit_text:before{content:\"<<!escape_string:qr.submit.text>>\";}\n" +
 						"$.qr_submit.active>$.qr_submit_text:before{content:\"<<!escape_string:qr.submit.text_active>>\";}\n" +
