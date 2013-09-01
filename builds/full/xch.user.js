@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2.1.1
+// @version     0.2.2
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -62,6 +62,8 @@ var xch = (function () {
 			homepage: "http://dnsev.github.com/xch/",
 			inline: true,
 			site: "38chan",
+			update_homepage: "http://dnsev.github.com/xch/#!install/update",
+			update_url: "",
 			browser: {
 				firefox: false,
 				chrome: false
@@ -84,6 +86,24 @@ var xch = (function () {
 					}
 					catch (e) {
 						// Not applicable
+					}
+				}
+
+				// Update URL
+				this.update_url = this.update_homepage;
+				try {
+					// Greasemonkey
+					var m = /\/\/\s*@downloadURL\s+(\S+)/.exec(GM_info.scriptMetaStr);
+					if (m) {
+						xch.script.update_url = m[1];
+					}
+				}
+				catch (e) {
+					try {
+						// Tampermonkey
+						xch.script.update_url = GM_getMetadata("downloadURL").toString().trim();
+					}
+					catch (e) {
 					}
 				}
 
@@ -305,6 +325,10 @@ var xch = (function () {
 							// Content
 							content = new xch.Content(context);
 							content.parse(context);
+
+							// Update
+							var updater = new xch.ScriptUpdater();
+							updater.execute();
 						}
 						else {
 							// TODO : Delete some stuff
@@ -452,6 +476,12 @@ var xch = (function () {
 				else if (data.return_type == "html") {
 					arg.responseType = "document";
 				}
+				else if (data.return_type == "json") {
+					arg.responseType = "json";
+				}
+				else {
+					arg.responseType = "text";
+				}
 			}
 			else {
 				// Create
@@ -468,6 +498,9 @@ var xch = (function () {
 				}
 				else if (data.return_type == "html") {
 					xhr.responseType = "document";
+				}
+				else if (data.return_type == "json") {
+					xhr.responseType = "json";
 				}
 				else {
 					xhr.responseType = "text";
@@ -1654,6 +1687,388 @@ var xch = (function () {
 				}
 
 			};
+
+		})(),
+
+
+		// Updater
+		ScriptUpdater: (function () {
+
+			var ScriptUpdater = function () {
+				this.error = false;
+				this.changelog = null;
+				this.ajax = null;
+
+				this.settings = {
+					check_interval: 60 * 60 // 1 hour
+				};
+			};
+
+			var this_private = {
+
+				on_ajax_load: function (event) {
+					var j_data = null;
+					try {
+						j_data = JSON.parse(event.response);
+					}
+					catch (e) {
+						j_data = null;
+					}
+					if (j_data != null) {
+						event.data.self.changelog = event.data.self.parse_changelog(j_data);
+						event.data.self.check_changelog_for_updates(event.data.self.changelog, event.data.update_data);
+					}
+					else {
+						event.data.self.error = true;
+					}
+					event.data.self.ajax = null;
+				},
+				on_ajax_error: function (event) {
+					event.data.self.error = true;
+					event.data.self.ajax = null;
+				},
+				on_ajax_abort: function (event) {
+					event.data.self.error = true;
+					event.data.self.ajax = null;
+				},
+				on_ajax_progress: function (event) {
+				},
+
+				title_is_relevant: function (title) {
+					return /[0-9\.]/.test(title);
+				},
+
+				version_compare: function (version_old, version_current) {
+					if (version_current == version_old) return -2; // Same
+
+					var v_current = version_current.split(".");
+					var v_old = version_old.split(".");
+					var change_direction = 0;
+
+					var i, cur, old, cur_n, old_n, len = v_current.length;
+					if (v_old.length > len) len = v_old.length;
+					for (i = 0; i < len; ++i) {
+						cur = (i < v_current.length ? parseInt(v_current[i].trim(), 10) : 0);
+						old = (i < v_old.length ? parseInt(v_old[i].trim(), 10) : 0);
+						cur = ((cur_n = isFinite(cur)) ? cur : 0);
+						old = ((old_n = isFinite(old)) ? old : 0);
+						if (cur == old) {
+							if (!cur_n || !old_n) change_direction = 0;
+						}
+						else {
+							if (cur > old) {
+								// Newer
+								change_direction = 1;
+							}
+							else {
+								// Older
+								change_direction = -1;
+							}
+							break;
+						}
+					}
+
+					return change_direction;
+				},
+
+				fresh_install_alert: function (version_current) {
+					new xch.Message({
+						type: "good",
+						title: "Userscript Installed",
+						html: (
+							style.e("div")
+							.append(
+								style.e("div")
+								.append(style.t("Thank you for installing "))
+								.append(
+									style.e("a", "message_link")
+									.attr("href", xch.script.homepage)
+									.attr("target", "_blank")
+									.text(xch.script.name)
+								)
+								.append(style.t("!"))
+							)
+							.append(
+								style.e("div")
+								.text("Please note that it is not complete yet, and some features will be missing.")
+							)
+						),
+						life: 0
+					});
+				},
+				version_change_alert: function (version_current, version_old) {
+					var change_direction = this_private.version_compare.call(this, version_old, version_current);
+
+					// Change
+					if (change_direction > -2) {
+						// Form text/links
+						var change_text = "Script version has ";
+						var changelog_link = "#!changes?from=";
+						if (change_direction == 0) {
+							change_text += "changed";
+							changelog_link += version_old + "&to=" + version_current;
+						}
+						else if (change_direction > 0) {
+							change_text += "increased";
+							changelog_link += version_old + "&to=" + version_current;
+						}
+						else {
+							change_text += "decreased";
+							changelog_link += version_current + "&to=" + version_old;
+						}
+						change_text += " from ";
+
+						// Html
+						var message, changes_container, changes_list;
+						(message = style.e("div"))
+						.append(
+							style.e("div")
+							.append(
+								style.t(change_text)
+							)
+							.append(
+								style.e("a", "message_link")
+								.attr("href", xch.script.homepage + "#!changes?version=" + version_old)
+								.attr("target", "_blank")
+								.text(version_old)
+							)
+							.append(style.t(" to "))
+							.append(
+								style.e("a", "message_link")
+								.attr("href", xch.script.homepage + changelog_link)
+								.attr("target", "_blank")
+								.text(version_current)
+							)
+							.append(style.t("!"))
+						);
+
+						// Message
+						new xch.Message({
+							type: "good",
+							title: "Userscript Updated",
+							html: message,
+							life: 0
+						});
+					}
+				},
+
+				update_alert: function (changes) {
+					var message, show_changes, changes_container, changes_list;
+					(message = style.e("div"))
+					.append(
+						style.e("div")
+						.append(
+							style.e("a", "message_link")
+							.text("Click here")
+							.attr("target", "_blank")
+							.attr("href", xch.script.browser.chrome ? xch.script.update_homepage : xch.script.update_url)
+						)
+						.append(style.t(" to update, "))
+						.append(
+							(show_changes = style.e("a", "message_link"))
+							.text("show changes")
+						)
+						.append(style.t(", or "))
+						.append(
+							style.e("a", "message_link")
+							.text("view source")
+							.attr("target", "_blank")
+							.attr("href", "https://github.com/dnsev/xch/commit/" + changes[0].sha)
+						)
+						.append(style.t("."))
+					)
+					.append(
+						(changes_container = style.e("div", "message_changes hidden"))
+						.append(
+							(changes_list = style.e("ul", "message_list"))
+						)
+					);
+
+					// Events
+					show_changes.on("click", { toggle_container: changes_container }, this_private.on_update_alert_changes_toggle_click);
+
+					// Form changes
+					for (var i = 0; i < changes.length; ++i) {
+						var c = this.get_individual_changes(changes[i]);
+						for (var j = 0; j < c.length; ++j) {
+							changes_list.append(
+								style.e("li", "message_list_item" + (j == 0 ? " message_list_item_big_spacing" : ""))
+								.text(c[j])
+							);
+						}
+					}
+
+					new xch.Message({
+						type: "good",
+						title: "Update Available: Version " + changes[0].title,
+						html: message,
+						life: 0
+					});
+				},
+
+				on_update_alert_changes_toggle_click: function (event) {
+					if (event.which != 1) return true;
+
+					if (event.data.toggle_container.hasClass("hidden")) {
+						event.data.toggle_container.removeClass("hidden");
+						$(this).text("hide changes");
+					}
+					else {
+						event.data.toggle_container.addClass("hidden");
+						$(this).text("show changes");
+					}
+				}
+
+			};
+
+			ScriptUpdater.prototype = {
+
+				constructor: ScriptUpdater,
+
+				execute: function () {
+					this.update_check(this.version_check());
+				},
+
+				update_check: function (forced) {
+					var check = false;
+					var now = (new Date()).getTime();
+
+					var update = (forced ? null : xch.site_get_value("script_update", null));
+					if (update === null) {
+						check = true;
+						update = {
+							timestamp: now,
+							version: xch.script.version.trim()
+						};
+					}
+					else {
+						var timestamp_diff = (now - update.timestamp) || 0;
+
+						if (timestamp_diff >= this.settings.check_interval * 1000) {
+							// Full check
+							check = true;
+							update.timestamp = now;
+							update.version = xch.script.version.trim();
+						}
+					}
+
+					if (check) {
+						// Check
+						this.ajax = xch.ajax({
+							url: "https://api.github.com/repos/dnsev/xch/commits",
+							method: "GET",
+							return_type: "text",
+							on: {
+								load: this_private.on_ajax_load,
+								error: this_private.on_ajax_error,
+								abort: this_private.on_ajax_abort,
+								progress: this_private.on_ajax_progress
+							},
+							self: this,
+							update_data: update
+						});
+					}
+				},
+
+				parse_changelog: function (j_data) {
+					var changelog = [];
+
+					for (var i = 0; i < j_data.length; ++i) {
+						var title = j_data[i].commit.message.replace(/\s*\n\s*(0|[^0])*$/, "");
+
+						if (this_private.title_is_relevant.call(this, title)) {
+							var entry = {
+								sha: j_data[i].sha,
+								title: title,
+								comment: j_data[i].commit.message.replace(/^[^\r\n]*\r?\n?\r?\n?/, ""),
+								timestamp: 0,
+							};
+
+							var date = /^([0-9]+)-([0-9]+)-([0-9]+)T([0-9]+):([0-9]+):([0-9]+)Z$/.exec(j_data[i].commit.committer.date);
+							if (date) {
+								entry.timestamp = (new Date(
+									parseInt(date[1]),
+									parseInt(date[2]) - 1,
+									parseInt(date[3]),
+									parseInt(date[4]),
+									parseInt(date[5]),
+									parseInt(date[6])
+								)).getTime();
+							}
+
+							changelog.push(entry);
+						}
+					}
+
+					return changelog;
+				},
+				check_changelog_for_updates: function (changelog, update_data) {
+					var version_current = update_data.version;
+					var changes = this.get_changelog_updates(changelog, version_current);
+
+					if (changes.length > 0) {
+						update_data.version = changes[0].title;
+						this_private.update_alert.call(this, changes);
+					}
+
+					// Save
+					xch.site_set_value("script_update", update_data);
+				},
+				get_changelog_updates: function (changelog, from_version) {
+					var changes = [];
+
+					for (var i = 0; i < changelog.length; ++i) {
+						var change_direction = this_private.version_compare.call(this, from_version, changelog[i].title);
+
+						if (change_direction >= 0) {
+							changes.push(changelog[i]);
+						}
+					}
+
+					return changes;
+				},
+				get_individual_changes: function (entry) {
+					// Changes list
+					var changes = entry.comment.split("\n");
+					// Fix back into a single line if necessary
+					for (var i = 1; i < changes.length; ++i) {
+						if (/^[a-z]/.test(changes[i])) {
+							changes[i - 1] = changes[i - 1].trim() + " " + changes[i].trim();
+							changes.splice(i, 1);
+							--i;
+						}
+					}
+					// Done
+					return changes;
+				},
+
+				version_check: function () {
+					var version_current = xch.script.version.trim();
+					var version_old = xch.site_get_value("script_version", null);
+					if (version_old === null) {
+						// Fresh install
+						this_private.fresh_install_alert.call(this, version_current);
+
+						// Change
+						xch.site_set_value("script_version", version_current);
+						return true;
+					}
+					else {
+						if (version_current != version_old) {
+							// Compare
+							this_private.version_change_alert.call(this, version_current, version_old);
+
+							// Change
+							xch.site_set_value("script_version", version_current);
+							return true;
+						}
+					}
+					return false;
+				}
+
+			};
+
+			return ScriptUpdater;
 
 		})(),
 
@@ -9702,126 +10117,6 @@ var xch = (function () {
 					event_data.menu = null;
 				},
 
-				version_check: function () {
-					var version_current = xch.script.version.trim();
-					var version_old = xch.site_get_value("script_version", null);
-					if (version_old === null) {
-						// Fresh install
-						this_private.fresh_install_alert.call(this, version_current);
-
-						// Change
-						xch.site_set_value("script_version", version_current);
-					}
-					else {
-						if (version_current != version_old) {
-							// Compare
-							this_private.version_change_alert.call(this, version_current, version_old);
-
-							// Change
-							xch.site_set_value("script_version", version_current);
-						}
-					}
-				},
-				fresh_install_alert: function (version_current) {
-					new xch.Message({
-						type: "good",
-						title: "Userscript Installed",
-						html: (
-							style.e("div")
-							.append(
-								style.e("div")
-								.append(style.t("Thank you for installing "))
-								.append(
-									style.e("a", "message_link")
-									.attr("href", xch.script.homepage)
-									.attr("target", "_blank")
-									.text(xch.script.name)
-								)
-								.append(style.t("!"))
-							)
-							.append(
-								style.e("div")
-								.text("Please note that it is not complete yet, and some features will be missing.")
-							)
-						),
-						life: 0
-					});
-				},
-				version_change_alert: function (version_current, version_old) {
-					var v_current = version_current.split(".");
-					var v_old = version_old.split(".");
-					var change_direction = 0;
-
-					var i, cur, old, cur_n, old_n, len = v_current.length;
-					if (v_old.length > len) len = v_old.length;
-					for (i = 0; i < len; ++i) {
-						cur = (i < v_current.length ? parseInt(v_current[i].trim(), 10) : 0);
-						old = (i < v_old.length ? parseInt(v_old[i].trim(), 10) : 0);
-						cur = ((cur_n = isFinite(cur)) ? cur : 0);
-						old = ((old_n = isFinite(old)) ? old : 0);
-						if (cur == old) {
-							if (!cur_n || !old_n) change_direction = 0;
-						}
-						else {
-							if (cur > old) {
-								// Newer
-								change_direction = 1;
-							}
-							else {
-								// Older
-								change_direction = -1;
-							}
-							break;
-						}
-					}
-
-					// Change
-					if (change_direction > -2) {
-						// Form text/links
-						var change_text = "Script version has ";
-						var changelog_link = "#!changes?from=";
-						if (change_direction == 0) {
-							change_text += "changed";
-							changelog_link += version_old + "&to=" + version_current;
-						}
-						else if (change_direction > 0) {
-							change_text += "increased";
-							changelog_link += version_old + "&to=" + version_current;
-						}
-						else {
-							change_text += "decreased";
-							changelog_link += version_current + "&to=" + version_old;
-						}
-						change_text += " from ";
-
-						// Message
-						new xch.Message({
-							type: "good",
-							title: "Userscript Updated",
-							html: (
-								style.e("div")
-								.append(
-									style.t(change_text)
-								)
-								.append(
-									style.e("a", "message_link")
-									.attr("href", xch.script.homepage + "#!changes?version=" + version_old)
-									.attr("target", "_blank")
-									.text(version_old)
-								)
-								.append(style.t(" to "))
-								.append(
-									style.e("a", "message_link")
-									.attr("href", xch.script.homepage + changelog_link)
-									.attr("target", "_blank")
-									.text(version_current)
-								)
-								.append(style.t("!"))
-							)
-						});
-					}
-				},
-
 				delete_post_image_action: function (post) {
 					this.delete_post_image(post, true);
 					return true;
@@ -9885,9 +10180,6 @@ var xch = (function () {
 
 					// Title
 					this.format_title();
-
-					// Version check
-					this_private.version_check.call(this);
 				},
 				parse: function (context) {
 					var self = this;
@@ -15286,7 +15578,7 @@ var xch = (function () {
 						"$.message.info>$.message_inner $.message_shadow," +
 						"$.message.info>$.message_inner $.message_hover_shadow:hover{text-shadow:<<messages.title.shadow.offset.left>>px <<messages.title.shadow.offset.top>>px <<messages.title.shadow.blur>>px <<messages.colors.info.title_shadow>>;}\n" +
 
-						"$.message_link{<<!font:messages.link.font>>}\n" +
+						"$.message_link{cursor:pointer;<<!font:messages.link.font>>}\n" +
 						"$.message.plain $.message_link{color:<<messages.colors.plain.link>>;}\n" +
 						"$.message.plain $.message_link:hover{color:<<messages.colors.plain.link_hover>>;}\n" +
 						"$.message.error $.message_link{color:<<messages.colors.error.link>>;}\n" +
@@ -15300,6 +15592,12 @@ var xch = (function () {
 						"$.message.info $.message_link{color:<<messages.colors.info.link>>;}\n" +
 						"$.message.info $.message_link:hover{color:<<messages.colors.info.link_hover>>;}\n" +
 
+						"$.message_changes{max-height:200px;overflow-y:auto;margin-top:8px;}\n" +
+						"$.message_changes.hidden{display:none;}\n" +
+						"$.message_list{padding:0px;margin:0px 0px 0px 20px;list-style-type:disc;}\n" +
+						"$.message_list_item{padding:0px;margin:0px;}\n" +
+						"$.message_list_item+$.message_list_item{margin-top:2px;}\n" +
+						"$.message_list_item+$.message_list_item.message_list_item_big_spacing{margin-top:10px;}\n" +
 						//}
 
 						//{ Messenger custom
