@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2.1
+// @version     0.2.1.1
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -868,6 +868,18 @@ var xch = (function () {
 			}
 		},
 
+		format_number: function (n, cutoff, divisor, decimal_count, labels) {
+			var d = Math.pow(10, decimal_count), i = 0;
+
+			while (true) {
+				if (n < cutoff || i + 1 >= labels.length) break;
+				n /= divisor;
+				++i;
+			}
+
+			return (Math.round(n * d) / d) + labels[i];
+		},
+
 		dom_to_string: function (object, filter_function) {
 			var str = "";
 
@@ -888,28 +900,46 @@ var xch = (function () {
 			return str;
 		},
 
-		format_number: function (n, cutoff, divisor, decimal_count, labels) {
-			var d = Math.pow(10, decimal_count), i = 0;
+		string_to_dom: (function () {
 
-			while (true) {
-				if (n < cutoff || i + 1 >= labels.length) break;
-				n /= divisor;
-				++i;
-			}
+			var pfs_supported = ((new DOMParser()).parseFromString("", "text/html") != null);
 
-			return (Math.round(n * d) / d) + labels[i];
-		},
+			return (pfs_supported ?
+				function (str) {
+					// Firefox version
+					var html;
+					try {
+						html = (new DOMParser()).parseFromString(str, "text/html");
+						/*!debug!*/if (!html) console.log("string_to_dom parsing error: " + html + " returned");
+						/*!debug!*/if (!html) console.log(str);
+					}
+					catch (e) {
+						html = null;
+						/*!debug!*/console.log("string_to_dom parsing error: " + e.toString());
+						/*!debug!*/console.log(str);
+					}
+					return html;
+				} :
+				function (str) {
+					// Chrome version
+					var new_document = document.implementation.createHTMLDocument("");
+					var doc_element = new_document.documentElement;
 
-		string_to_dom: function (str) {
-			var html;
-			try {
-				html = (new DOMParser()).parseFromString(str, "text/html");
-			}
-			catch (e) {
-				html = null;
-			}
-			return html;
-		},
+					doc_element.innerHTML = str;
+					var first_element = doc_element.firstElementChild;
+
+					if (
+						doc_element.childElementCount === 1 &&
+						first_element.localName.toLowerCase() === "html"
+					) {
+						new_document.replaceChild(first_element, doc_element);
+					}
+
+					return new_document;
+				}
+			);
+
+		})(),
 
 		get_mime_type_from_extension: function (ext) {
 			ext = ext.toLowerCase();
@@ -1056,7 +1086,7 @@ var xch = (function () {
 						filter: {
 							deny: [{
 								name: function (name, level_offset) {
-									return (name.indexOf("my_posts") >= 0);
+									return (name.indexOf("xch") != 0 || name.indexOf("my_posts") >= 0);
 								},
 								cascade: false,
 								stub: false
@@ -3958,20 +3988,11 @@ var xch = (function () {
 					if (event.okay) {
 						// Parse response
 						var html = xch.string_to_dom(event.response);
-						if (html == null) {
-							/*!debug!*/console.log("Response could not be parsed");console.log(event.response);
-							html = $();
-						}
-						else {
-							html = $(html).find("html");
-						}
 						// Check
-						if (html.length > 0) {
+						if (html != null && (html = $(html)).length > 0) {
 							// Parse
 							this_private.acquire_post_context_from_html.call(event.data.qr, html, event.data.qr_pc_thread, true);
 						}
-						// Done
-						html = null;
 					}
 
 					// Done
@@ -4279,15 +4300,8 @@ var xch = (function () {
 					if (event.okay) {
 						// Parse response
 						var html = xch.string_to_dom(event.response);
-						if (html == null) {
-							/*!debug!*/console.log("Response could not be parsed");console.log(event.response);
-							html = $();
-						}
-						else {
-							html = $(html).find("html");
-						}
 						// Check
-						if (html.length > 0) {
+						if (html != null && (html = $(html)).length > 0) {
 							// Parse
 							this_private.submit_check.call(event.data.qr, html, event.data, event);
 						}
@@ -7018,20 +7032,13 @@ var xch = (function () {
 						if (event.data.loader.source == null) {
 							// Parse response
 							html = xch.string_to_dom(event.response);
-							if (html == null) {
-								/*!debug!*/console.log("Response could not be parsed");console.log(event.response);
-								html = $();
-							}
-							else {
-								html = $(html).find("html");
-							}
 						}
 						else {
 							html = event.data.loader.source.html;
 							event.data.loader.source.html = null;
 						}
 						// Check
-						if (html.length > 0) {
+						if (html != null && (html = $(html)).length > 0) {
 							var error;
 							if ((error = content.check_html_for_error(html)) !== null) {
 								// Remove last "."
@@ -8945,7 +8952,7 @@ var xch = (function () {
 				this.post_highlight_id_target = -1;
 
 				// Event listening
-				location.on("change", this_private.on_location_change);
+				location.on("change", this_private.on_location_change, this);
 
 				// Title update with OP
 				if (!info.index) {
@@ -9225,7 +9232,7 @@ var xch = (function () {
 						// Depth check
 						var depth = 0;
 						for (j = 0; j < temp[0].length; ++j) {
-							if (String.charCodeAt(temp[0][j]) <= 32) continue;
+							if (temp[0][j].charCodeAt(0) <= 32) continue;
 							else if (temp[0][j] == "#") {
 								j = -1;
 								break;
@@ -9454,15 +9461,8 @@ var xch = (function () {
 					if (event.okay) {
 						// Parse response
 						var html = xch.string_to_dom(event.response);
-						if (html == null) {
-							/*!debug!*/console.log("Response could not be parsed");console.log(event.response);
-							html = $();
-						}
-						else {
-							html = $(html).find("html");
-						}
 						// Check
-						if (html.length > 0) {
+						if (html != null && (html = $(html)).length > 0) {
 							// Parse
 							var error = event.data.event_data.self.check_html_for_error(html);
 							if (error === null) {
@@ -13117,7 +13117,6 @@ var xch = (function () {
 					if ((bounding.flags & 2) != 0) {
 						// Extend up
 						var r = (top - py) + eb;
-							console.log(top+","+py);
 
 						if (r <= 0) {
 							bounding.flags &= ~2;
@@ -13282,9 +13281,9 @@ var xch = (function () {
 						// Size
 						var s = img.attr("style");
 						if (s) {
-							var m = /width:([0-9]+)px/i.exec(s);
+							var m = /width:\s*([0-9]+)px/i.exec(s);
 							if (m) this.thumbnail_width = parseInt(m[1]);
-							m = /height:([0-9]+)px/i.exec(s);
+							m = /height:\s*([0-9]+)px/i.exec(s);
 							if (m) this.thumbnail_height = parseInt(m[1]);
 						}
 
