@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2.2.1
+// @version     0.2.2.2
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -68,6 +68,23 @@ var xch = (function () {
 				firefox: false,
 				chrome: false
 			},
+
+			execute_asap: (function () {
+
+				var execute_asap = function (callback, check) {
+					if (check.call(this)) {
+						callback.call(this);
+					}
+					else {
+						var timeout = setTimeout(function () {
+							execute_asap.call(this, callback, check);
+						}, 10);
+					}
+				};
+
+				return execute_asap;
+
+			})(),
 
 			initialize: function () {
 				// Get the name and version
@@ -293,13 +310,31 @@ var xch = (function () {
 					// Communication
 					communication = new xch.Communication();
 
+					// Validation setting
+					var validated = undefined;
+
+					// Styling
+					xch.script.execute_asap(
+						function () {
+							if (validated === undefined && style == null) {
+								var head = document.querySelector("head");
+								if (head != null) {
+									style = new xch.Style($(head));
+								}
+							}
+						},
+						function () {
+							return (document.readyState == "complete" || document.readyState == "interactive") && document.querySelector("head") != null;
+						}
+					);
+
 					// HTML ready
 					$(document).ready(function() {
 						// Get html
 						var html = $("html");
 
 						// Validate
-						if (meta.validate(html)) {
+						if ((validated = meta.validate(html))) {
 							// Ready
 							communication.ready(xch.script.site);
 
@@ -310,7 +345,10 @@ var xch = (function () {
 							info = new xch.Information(meta, html);
 
 							// Styling
-							style = new xch.Style(html);
+							if (style == null) {
+								style = new xch.Style(html.find("head"));
+							}
+							style.stylize(html);
 
 							// Context
 							var context = new xch.Content.Context({
@@ -331,7 +369,21 @@ var xch = (function () {
 							updater.execute();
 						}
 						else {
-							// TODO : Delete some stuff
+							// Remove style
+							if (style != null) {
+								style.remove();
+								style = null;
+							}
+
+							// Remove other objects
+							location.remove();
+							location = null;
+
+							api.remove();
+							api = null;
+
+							communication.remove();
+							communication = null;
 						}
 					});
 
@@ -2374,9 +2426,9 @@ var xch = (function () {
 				add_listeners: function () {
 					var self = this;
 
-					window.addEventListener("popstate", function () {
+					window.addEventListener("popstate", this.on_window_popstate = (function () {
 						this_private.update_state.call(self, false, false);
-					}, false);
+					}), false);
 				},
 
 				update_state: function (init, is_new) {
@@ -2471,6 +2523,11 @@ var xch = (function () {
 							}
 						}
 					}
+				},
+
+				remove: function () {
+					window.removeEventListener("popstate", this.on_window_popstate, false);
+					this.on_window_popstate = null;
 				}
 
 			};
@@ -2517,9 +2574,9 @@ var xch = (function () {
 					var self = this;
 
 					// Closing
-					window.addEventListener("beforeunload", function () {
+					window.addEventListener("beforeunload", this.on_window_beforeunload = (function () {
 						this_private.on_close.call(self);
-					}, false);
+					}), false);
 				},
 
 				on_open: function () {
@@ -2703,6 +2760,11 @@ var xch = (function () {
 							}
 						}
 					}
+				},
+
+				remove: function () {
+					window.removeEventListener("beforeunload", this.on_window_beforeunload, false);
+					this.on_window_beforeunload = null;
 				}
 
 			};
@@ -11152,8 +11214,8 @@ var xch = (function () {
 
 					// Link bounding
 					if (
-						left > this_pos.left + this_width ||
-						left + c_width < this_pos.left
+						left > this_pos.left ||
+						left + c_width < this_pos.left + this_width
 					) {
 						// Center
 						left = this_pos.left + (this_width - c_width) / 2;
@@ -13915,7 +13977,7 @@ var xch = (function () {
 		// Styling
 		Style: (function () {
 
-			var Style = function (html) {
+			var Style = function (head) {
 				this.cls = "xch";
 				this.css = new Style.CSS();
 
@@ -15008,9 +15070,8 @@ var xch = (function () {
 				};
 
 				// Insert stylesheet
-				html.find("head")
-				.append( //{ Stylesheet
-					$("<style>")
+				head.append( //{ Stylesheet
+					(this.style_tag = $(document.createElement("style")))
 					.attr("id", "xch_style")
 					.html(this_private.parse_stylesheet.call(this, this.stylesheet_base =
 						/*!stylesheet-pre-parse!*/this_private.parse_stylesheet_pre.call(this,
@@ -15798,9 +15859,6 @@ var xch = (function () {
 						/*!stylesheet-pre-parse!*/)
 					))
 				); //}
-
-				// Stylize
-				this.stylize(html);
 			};
 
 			var this_private = {
@@ -16098,6 +16156,10 @@ var xch = (function () {
 				},
 				escape_string: function (str) {
 					return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+				},
+
+				remove: function () {
+					this.style_tag.remove();
 				}
 
 			};
