@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2.2
+// @version     0.2.2.1
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -3385,9 +3385,9 @@ var xch = (function () {
 					data_fields_extra: []
 				};
 				this.saved_post_settings = {
-					password: window.localStorage.getItem("password", ""),
-					name: window.localStorage.getItem("name", ""),
-					email: window.localStorage.getItem("email", "")
+					password: window.localStorage.getItem("password") || "",
+					name: window.localStorage.getItem("name") || "",
+					email: window.localStorage.getItem("email") || ""
 				};
 				if (this.saved_post_settings.password.length == 0) {
 					this.saved_post_settings.password = this.create_password(8);
@@ -5155,11 +5155,11 @@ var xch = (function () {
 					}
 				},
 				load_post_name: function () {
-					this.saved_post_settings.name = window.localStorage.getItem("name", "") || "";
+					this.saved_post_settings.name = window.localStorage.getItem("name") || "";
 					this_private.compare_post_name.call(this);
 				},
 				load_post_email: function () {
-					this.saved_post_settings.email = window.localStorage.getItem("email", "") || "";
+					this.saved_post_settings.email = window.localStorage.getItem("email") || "";
 					this_private.compare_post_email.call(this);
 				},
 				save_post_name: function (value) {
@@ -5236,15 +5236,6 @@ var xch = (function () {
 							++p[i];
 						}
 
-						// Comment
-						s_val = submit_data.comment.value.trim();
-						p_val = posts[i].get_comment_plaintext();
-						if (
-							(s_val.length == 0 && (p_val === null || p_val.trim().length == 0))
-						) {
-							++p[i];
-						}
-
 						// Image
 						if (
 							(submit_data.file.file != null) === (posts[i].image != null && posts[i].image.good())
@@ -5253,10 +5244,47 @@ var xch = (function () {
 						}
 					}
 
+					// Comment matching
+					if (Math.abs(p[0] - p[1]) <= 1) {
+						var word_matches = [0,0];
+						for (var i = 0; i < p.length; ++i) {
+							// Comment
+							s_val = submit_data.comment.value.trim();
+							p_val = posts[i].get_comment_plaintext() || "";
+							word_matches[i] = this_private.get_word_matches.call(this, s_val, p_val);
+						}
+						if (word_matches[0] > word_matches[1]) ++p[0];
+						else if (word_matches[1] > word_matches[0]) ++p[1];
+						if (p[0] == p[1]) {
+							// Adjust again; this should give priority to word-based matching
+							if (word_matches[0] > word_matches[1]) ++p[0];
+							else if (word_matches[1] > word_matches[0]) ++p[1];
+						}
+					}
+
 					// Return
 					if (p[0] == p[1]) return -1;
 					else if (p[0] > p[1]) return 0;
 					return 1;
+				},
+				get_word_matches: function (base, compare) {
+					// Returns an approximate rating of how closely 2 strings match; 0 = not at all, 1 = very close (if not identical) match
+					var b = base.split(/\W+/);
+					var c = compare.split(/\W+/);
+					var b_length = b.length;
+					var matches = 0;
+
+					for (var i = 0, j; i < c.length; ++i) {
+						for (j = 0; j < b.length; ++j) {
+							if (c[i] == b[j]) {
+								b.splice(j, 1);
+								++matches;
+								break;
+							}
+						}
+					}
+
+					return Math.max(0, matches - Math.abs(b_length - c.length)) / b_length;
 				},
 
 				setup_submitted_thread_find: function (ajax_data, loader, redirect_to_thread) {
