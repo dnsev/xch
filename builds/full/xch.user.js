@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2.2.2
+// @version     0.2.2.3
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -781,14 +781,14 @@ var xch = (function () {
 				else if (format == 'g') { // 12-hour format of an hour without leading zeros
 					s += (date.getHours() % 12) + 1;
 				}
-				else if (format == 'h') { // 12-hour format of an hour without leading zeros
+				else if (format == 'h') { // 12-hour format of an hour with leading zeros
 					s += (date.getHours() % 12) + 1;
 					if (s.length < 2) s = "0" + s;
 				}
-				else if (format == 'G') { // 12-hour format of an hour with leading zeros
+				else if (format == 'G') { // 24-hour format of an hour without leading zeros
 					s += date.getHours();
 				}
-				else if (format == 'H') { // 12-hour format of an hour with leading zeros
+				else if (format == 'H') { // 24-hour format of an hour with leading zeros
 					s += date.getHours();
 					if (s.length < 2) s = "0" + s;
 				}
@@ -3215,7 +3215,7 @@ var xch = (function () {
 
 					this.debug_popup = new xch.Popup({
 						title: "Debug Information",
-						description: "Any personal information (such as passwords, posted content, etc.) and unimportant information (such as the details of current threads/posts) has been omitted.",
+						text: "Any personal information (such as passwords, posted content, etc.) and unimportant information (such as the details of current threads/posts) has been omitted.",
 						textarea: {
 							height: 200,
 							value: xch.get_debug_info(),
@@ -3245,7 +3245,7 @@ var xch = (function () {
 
 					this.settings_popup = new xch.Popup({
 						title: "Settings",
-						description: "Settings are not available yet, please wait warmly.",
+						text: "Settings are not available yet, please wait warmly.",
 						size: {
 							width: 180
 						},
@@ -8281,17 +8281,19 @@ var xch = (function () {
 							.text(params.title)
 						);
 					}
-					if ("description" in params) {
+					if ("text" in params) {
 						var d;
 						message_content.append(
 							(d = style.e("div", "popup_description popup_content_item"))
 						);
-						if (typeof(params.description) == typeof("")) {
-							d.text(params.description);
-						}
-						else {
-							d.html(params.description);
-						}
+						d.text(params.text);
+					}
+					if ("html" in params) {
+						var d;
+						message_content.append(
+							(d = style.e("div", "popup_description popup_content_item"))
+						);
+						d.html(params.html);
 					}
 					if ("textarea" in params) {
 						if (params.textarea.single_line) {
@@ -8320,8 +8322,13 @@ var xch = (function () {
 						for (var i = 0; i < params.buttons.length; ++i) {
 							buttons.append(
 								(button = style.e("button", "popup_button"))
-								.text(params.buttons[i].text)
 							);
+							if ("text" in params.buttons[i]) {
+								button.text(params.buttons[i].text);
+							}
+							if ("html" in params.buttons[i]) {
+								button.html(params.buttons[i].html);
+							}
 							if ("on" in params.buttons[i]) {
 								for (var ev in params.buttons[i].on) {
 									if (params.buttons[i].on[ev] instanceof Function) {
@@ -9067,13 +9074,7 @@ var xch = (function () {
 						this.container.text(params.text);
 					}
 					else if ("html" in params) {
-						if (typeof(params.html) == typeof("")) {
-							this.container = style.e("div", "menu_option");
-							this.container.html(params.html);
-						}
-						else {
-							this.container = style.add_class(params.html.addClass("menu_option"));
-						}
+						this.container = style.add_class(params.html.addClass("menu_option"));
 					}
 					else {
 						this.container = style.e("div", "menu_option");
@@ -9832,7 +9833,7 @@ var xch = (function () {
 
 					var params = {
 						title: title,
-						description: description,
+						text: description,
 						size: {
 							width: 320
 						},
@@ -10072,7 +10073,7 @@ var xch = (function () {
 
 					var params = {
 						title: title,
-						description: description,
+						text: description,
 						size: {
 							width: 320
 						},
