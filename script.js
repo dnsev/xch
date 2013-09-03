@@ -39,6 +39,159 @@ var document_ready = (function () {
 })();
 
 
+// Date formatting
+var date = (function () {
+
+	var months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+	var months_short = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+	var days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+	var days_short = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+	var ordinal = ["st", "nd", "rd", "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "st", "nd", "rd", "th", "th", "th", "th", "th", "th", "th", "st"];
+
+	var format_value = function (date, format) {
+		var s = "";
+		if (format == 'd') { // Day of the month, 2 digits with leading zeros
+			s += date.getDate();
+			if (s.length < 2) s = "0" + s;
+		}
+		else if (format == 'j') { // Day of the month without leading zeros
+			s += date.getDate();
+		}
+		else if (format == 'l') { // A full textual representation of the day of the week
+			s += days[date.getDay()];
+		}
+		else if (format == 'D') { // A textual representation of a day, three letters
+			s += days_short[date.getDay()];
+		}
+		else if (format == 'S') { // English ordinal suffix for the day of the month, 2 characters
+			s +=ordinal[date.getDate() - 1];
+		}
+		else if (format == 'w') { // Numeric representation of the day of the week
+			s += date.getDay();
+		}
+		else if (format == 'F') { // A full textual representation of a month, such as January or March
+			s += months[date.getMonth()];
+		}
+		else if (format == 'M') { // A short textual representation of a month, three letters
+			s += months_short[date.getMonth()];
+		}
+		else if (format == 'm') { // Numeric representation of a month, with leading zeros
+			s += (date.getMonth() + 1);
+			if (s.length < 2) s = "0" + s;
+		}
+		else if (format == 'n') { // Numeric representation of a month, without leading zeros
+			s += (date.getMonth() + 1);
+		}
+		else if (format == 'y') { // Year, 2 digits
+			s += date.getFullYear().toString().substr(2);
+		}
+		else if (format == 'Y') { // A full numeric representation of a year, 4 digits
+			s += date.getFullYear();
+		}
+		else if (format == 'a') { // Lowercase Ante meridiem and Post meridiem
+			s += (date.getHours() >= 11 && date.getHours() <= 22 ? "pm" : "am");
+		}
+		else if (format == 'A') { // Uppercase Ante meridiem and Post meridiem
+			s += (date.getHours() >= 11 && date.getHours() <= 22 ? "PM" : "AM");
+		}
+		else if (format == 'g') { // 12-hour format of an hour without leading zeros
+			s += (date.getHours() % 12) + 1;
+		}
+		else if (format == 'h') { // 12-hour format of an hour with leading zeros
+			s += (date.getHours() % 12) + 1;
+			if (s.length < 2) s = "0" + s;
+		}
+		else if (format == 'G') { // 24-hour format of an hour without leading zeros
+			s += date.getHours();
+		}
+		else if (format == 'H') { // 24-hour format of an hour with leading zeros
+			s += date.getHours();
+			if (s.length < 2) s = "0" + s;
+		}
+		else if (format == 'i') { // Minutes with leading zeros
+			s += date.getMinutes();
+			if (s.length < 2) s = "0" + s;
+		}
+		else if (format == 's') { // Seconds with leading zeros
+			s += date.getSeconds();
+			if (s.length < 2) s = "0" + s;
+		}
+		else if (format == 'u') { // Microseconds
+			s += date.getMilliseconds();
+		}
+		else { // Unknown
+			s += format;
+		}
+		return s;
+	}
+
+	return {
+
+		format: function (timestamp, format) {
+			// Based on: http://php.net/manual/en/function.date.php
+			var date = new Date(timestamp);
+
+			return format.replace(/(\\*)([a-zA-Z])/g, function (match, esc, fmt) {
+				if (esc.length > 0) {
+					if ((esc.length % 2) == 1) {
+						// Escaped
+						return esc.substr(1, (esc.length - 1) / 2) + fmt;
+					}
+					// Remove slashes
+					return esc.substr(0, esc.length / 2) + format_value(date, fmt);
+				}
+				return format_value(date, fmt);
+			});
+		}
+
+	};
+
+})();
+
+
+// DOM parsing
+var string_to_dom = (function () {
+
+	var pfs_supported = ((new DOMParser()).parseFromString("", "text/html") != null);
+
+	return (pfs_supported ?
+		function (str) {
+			// Firefox version
+			var html;
+			try {
+				html = (new DOMParser()).parseFromString(str, "text/html");
+				/*!debug!*/if (!html) console.log("string_to_dom parsing error: " + html + " returned");
+				/*!debug!*/if (!html) console.log(str);
+			}
+			catch (e) {
+				html = null;
+				/*!debug!*/console.log("string_to_dom parsing error: " + e.toString());
+				/*!debug!*/console.log(str);
+			}
+			return html;
+		} :
+		function (str) {
+			// Chrome version
+			var new_document = document.implementation.createHTMLDocument("");
+			var doc_element = new_document.documentElement;
+
+			doc_element.innerHTML = str;
+			var first_element = doc_element.firstElementChild;
+
+			if (
+				doc_element.childElementCount === 1 &&
+				first_element.localName.toLowerCase() === "html"
+			) {
+				new_document.replaceChild(first_element, doc_element);
+			}
+
+			return new_document;
+		}
+	);
+
+})();
+
+
 // CSS validation
 var CSS = (function () {
 
@@ -468,11 +621,15 @@ var display_changelog = function (changelog) {
 		var content = elem("ul", "changelog_item_content");
 
 		// Title
-		title.html(
+		title.append(
 			elem("a", "changelog_item_title_link")
 			.text(changelog[i].title)
 			.attr("target", "_blank")
 			.attr("href", "https://github.com/dnsev/xch/commit/" + changelog[i].sha)
+		)
+		.append(
+			elem("span", "changelog_item_title_date")
+			.text(date.format(changelog[i].timestamp + timezone_offset, "F jS, Y @ G:i"))
 		);
 
 		// Changes list
@@ -499,6 +656,238 @@ var display_changelog = function (changelog) {
 };
 
 
+// Documentation
+var acquire_documentation = (function () {
+
+	var checked = false;
+
+	return function () {
+		if (checked) return;
+
+		$.ajax({
+			type: "GET",
+			url: "api.html",
+			dataType: "text",
+			cache: "true",
+			success: function (data, status, jq_xhr) {
+				checked = true;
+
+				var content = $(string_to_dom(data)).find("#content");
+				if (content.length > 0) {
+					var target = $("#content_about_api");
+
+					target.html(content);
+
+					side_navigation.setup(target, false);
+				}
+			},
+			error: function (jq_xhr, status) {
+				$("#content_about_api>.loading_message").addClass("error").attr("message", "Failed to load documentation");
+			}
+		});
+	};
+
+})();
+
+
+// Side navigation
+var side_navigation = (function () {
+
+	var nav_bar = null;
+	var nav_section = null;
+	var nav_ids = null;
+	var nav_id_current = 0;
+	var nav_fixed = false;
+	var first_timeout = null;
+
+	var private_functions = {
+		setup: function (n_bar, n_section, no_select) {
+			// Clear old
+			if (nav_bar != null) functions.teardown();
+
+			// Set new
+			nav_bar = n_bar;
+			nav_section = n_section;
+
+			// Find navigation ids
+			var navs = nav_bar.find("[section_id]");
+			var sections = nav_section.find("[section_id]");
+			navs.removeClass("current");
+			navs.find(".side_navigation_link").on("click", private_functions.on_nav_link_click);
+
+			nav_ids = [];
+			for (var i = 0, j, entry; i < sections.length; ++i) {
+				entry = {
+					id: null,
+					section: $(sections[i]),
+					nav: null
+				};
+
+				entry.id = entry.section.attr("section_id");
+
+				for (j = 0; j < navs.length; ++j) {
+					if ($(navs[j]).attr("section_id") == entry.id) {
+						entry.nav = $(navs[j]);
+						navs.splice(j, 1);
+						break;
+					}
+				}
+
+				nav_ids.push(entry);
+			}
+
+			// Update
+			if (no_select) {
+				nav_id_current = -1;
+			}
+			else {
+				nav_id_current = private_functions.find_nav_id();
+				if (nav_id_current >= 0) {
+					nav_ids[nav_id_current].nav.addClass("current");
+				}
+			}
+			nav_fixed = nav_bar.hasClass("fixed");
+			private_functions.update_nav_fixed();
+
+			// Events
+			$(window).on("scroll", private_functions.on_window_scroll);
+			first_timeout = setTimeout(function () {
+				first_timeout = null;
+				private_functions.on_window_scroll();
+			}, 10);
+		},
+		find_nav_id: function () {
+			var id = -1;
+
+			var win = $(window);
+			var scroll_top = win.scrollTop();
+			var window_height = win.height() / 2;
+
+			for (var i = 0; i < nav_ids.length; ++i) {
+				if (nav_ids[i].section.offset().top < scroll_top + window_height) {
+					id = i;
+					if (nav_ids[i].section.offset().top >= scroll_top) break;
+				}
+				else {
+					break;
+				}
+			}
+
+			return id;
+		},
+		update_nav_id: function () {
+			var new_id = private_functions.find_nav_id();
+			if (new_id != nav_id_current) {
+				if (nav_id_current >= 0 && nav_ids[nav_id_current].nav != null) {
+					nav_ids[nav_id_current].nav.removeClass("current");
+				}
+				nav_id_current = new_id;
+				if (nav_ids[nav_id_current].nav != null) {
+					nav_ids[nav_id_current].nav.addClass("current");
+				}
+			}
+		},
+		update_nav_fixed: function () {
+			var win = $(window);
+			var scroll_top = win.scrollTop();
+
+			var top = nav_bar.offset().top;
+
+			if (nav_fixed) {
+				if (scroll_top <= top) {
+					nav_bar.removeClass("fixed");
+					nav_fixed = false;
+				}
+			}
+			else {
+				if (scroll_top > top) {
+					nav_bar.addClass("fixed");
+					nav_fixed = true;
+				}
+			}
+		},
+
+		on_window_scroll: function (event) {
+			private_functions.update_nav_id();
+
+			private_functions.update_nav_fixed();
+
+			if (first_timeout !== null) {
+				clearTimeout(first_timeout);
+				first_timeout = null;
+			}
+		},
+		on_nav_link_click: function (event) {
+			if (event.which != 1 || nav_ids == null) return true;
+
+			// Force scroll update
+			var section_length_offset = (nav_section.parent().attr("id") || "").replace(/^content_/, "").split("_").length;
+			var section_id = $(this).attr("href").replace(/^.+?#!?|\?.+/g, "").split("/");
+			section_id = section_id.slice(section_length_offset, section_id.length);
+			section_id = (section_id.length == 0 ? nav_ids[0].id : section_id.join("_"));
+
+			side_navigation.set_section(null, section_id);
+
+			return true;
+		}
+	};
+
+	var functions = {
+		setup: function (container, no_select) {
+			var n_bar, n_section;
+			if (
+				(n_bar = container.find(".side_navigation")).length > 0 &&
+				(n_section = container.find(".sectioned_content")).length > 0
+			) {
+				private_functions.setup(n_bar, n_section, no_select);
+			}
+		},
+		teardown: function () {
+			if (nav_ids != null) {
+				// Events
+				$(window).off("scroll", private_functions.on_window_scroll);
+				nav_bar.find(".side_navigation_link").off("click", private_functions.on_nav_link_click);
+
+				nav_bar = null;
+				nav_section = null;
+				nav_ids = null;
+			}
+		},
+		set_section: function (target, section_id) {
+			var section = (nav_section || target).find('[section_id="' + section_id + '"]');
+			if (section.length > 0) {
+				// Scroll to
+				var top = section.offset().top;
+				var height = section.height();
+				var win = $(window);
+				var win_height = win.height();
+
+				win.scrollTop(top - Math.max(0, (win_height - height) / 2));
+			}
+
+			// Change navigation id
+			if (nav_ids != null) {
+				var new_id = nav_id_current;
+				for (var i = 0; i < nav_ids.length; ++i) {
+					if (nav_ids[i].id == section_id) {
+						new_id = i;
+						break;
+					}
+				}
+				if (new_id != nav_id_current) {
+					nav_ids[nav_id_current].nav.removeClass("current");
+					nav_id_current = new_id;
+					nav_ids[nav_id_current].nav.addClass("current");
+				}
+			}
+		}
+	};
+
+	return functions;
+
+})();
+
+
 // Objects
 var css = null;
 var loc = null;
@@ -521,15 +910,39 @@ document_ready(function () {
 	// Location events
 	loc.on("change", function (event) {
 		if (event.hash_changed) {
-			var content_target = this.hash.tree.join("_"), target;
-			if (content_target.length > 0 && (target = $("#content_" + content_target)).length > 0 && target.hasClass("hidden")) {
-				display_content(target, content_target, event.source == "load");
+			var content_target, target = null, i;
+			for (i = this.hash.tree.length; i > 0; --i) {
+				content_target = this.hash.tree.slice(0, i).join("_");
+				if ((target = $("#content_" + content_target)).length > 0) break;
+			}
 
-				if (content_target == "changes") {
-					acquire_changelog();
+			if (target != null && target.length > 0) {
+				if (target.hasClass("hidden")) {
+					display_content(target, this.hash.tree[0], event.source == "load");
+
+					if (content_target == "changes") {
+						acquire_changelog();
+					}
+					if (content_target == "about_api") {
+						acquire_documentation();
+					}
+
+					side_navigation.setup(target, event.first);
+				}
+				else if (i == this.hash.tree.length && i == 1) {
+					side_navigation.teardown();
+
+					display_content(null, null, false);
+				}
+				if (i < this.hash.tree.length) {
+					// Scroll to section
+					var section_id = this.hash.tree.slice(i, this.hash.tree.length).join("_");
+					if (!event.first) side_navigation.set_section(target, section_id);
 				}
 			}
 			else {
+				side_navigation.teardown();
+
 				display_content(null, null, false);
 			}
 		}

@@ -1,0 +1,400 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="UTF-8" />
+	<title>xch API</title>
+	<link rel="stylesheet" href="style.css" />
+	<script src="jquery.js"></script>
+</head>
+<body style="text-align: center;">
+<div style="width: 640px; display: inline-block; text-align: left;">
+<div id="content">
+<div class="side_navigation">
+<div class="side_navigation_inner_1">
+<div class="side_navigation_inner_2">
+	<div class="side_navigation_title" text_value="Navigation"></div>
+	<div class="side_navigation_link_container" section_id="intro"><a class="side_navigation_link" href="#!about/api" text_value="Intro"></a></div>
+	<div class="side_navigation_link_container" section_id="acquiring"><a class="side_navigation_link" href="#!about/api/acquiring" text_value="Acquiring"></a></div>
+	<div class="side_navigation_link_container" section_id="events"><a class="side_navigation_link" href="#!about/api/events" text_value="Events"></a></div>
+	<div class="side_navigation_link_container" section_id="gets"><a class="side_navigation_link" href="#!about/api/gets" text_value="Gets"></a></div>
+	<div class="side_navigation_link_container" section_id="header"><a class="side_navigation_link" href="#!about/api/header" text_value="Header"></a></div>
+	<div class="side_navigation_link_container" section_id="posts"><a class="side_navigation_link" href="#!about/api/posts" text_value="Posts"></a></div>
+	<div class="side_navigation_link_container" section_id="message"><a class="side_navigation_link" href="#!about/api/message" text_value="Message"></a></div>
+	<div class="side_navigation_link_container" section_id="popup"><a class="side_navigation_link" href="#!about/api/popup" text_value="Popup"></a></div>
+	<div class="side_navigation_link_container" section_id="menu"><a class="side_navigation_link" href="#!about/api/menu" text_value="Menu"></a></div>
+	<div class="side_navigation_link_container" section_id="callbacks"><a class="side_navigation_link" href="#!about/api/callbacks" text_value="Callbacks"></a></div>
+</div>
+</div>
+</div>
+<div class="sectioned_content">
+	<div class="section" section_id="intro">
+		<div class="section_label">API</div>
+		<p>
+			xch contains an API which makes it easier to interact and integrate with other scripts.
+		</p>
+		<p>
+			It exposes a lot of the custom functionality that xch provides (such as messages, popups, and menus) for other scripts to use as well when running with xch.
+		</p>
+	</div>
+	<div class="section" section_id="acquiring">
+		<div class="section_label">Acquiring API Reference</div>
+		<p>
+			A reference to the xch API can be acquired using the following function:
+		</p>
+<code>// xch detection
+var xch_acquire = function () {
+  var xch = null;
+  var xch_detail = {
+    event: "acquire",
+    return_value: undefined
+  };
+  document.dispatchEvent(new CustomEvent("xch_api_event", {
+    detail: xch_detail
+  }));
+  if (xch_detail.return_value !== undefined) {
+    try {
+      // Found
+      xch = xch_detail.return_value;
+      xch.api = new xch.API();
+
+      // Done
+      return xch;
+    }
+    catch (e) {
+    }
+  }
+  // Not found
+  return null;
+};</code>
+		<p>
+			<span>This function returns </span><span class="inline_code">null</span><span> if no xch script is detected, or an object with the following structure:</span>
+		</p>
+<code>var xch = {
+  API: /* API class */,
+  api: /* An instantiated version of xch.API */,
+  Message: /* Message class */,
+  Popup: /* Popup class */,
+  Menu: /* Menu class */
+};</code>
+		<p>
+			<span>If xch_acquire returns </span><span class="inline_code">null</span><span> when it shouldn't be, try delaying the function until later, as your script could be running before xch has setup its API.</span>
+		</p>
+		<p>
+			<span>Example: use </span><span class="inline_code">$(document).ready(...)</span><span> or similar</span>
+		</p>
+	</div>
+	<div class="section" section_id="events">
+		<div class="section_label">Events</div>
+		<p>
+			Events can be bound after the API reference has been detected. Events are typically bound in the following way:
+		</p>
+<code>xch.api.on(
+  "event_name",
+  function (event_data, callback_data, event_name) {
+    // Handle event here
+  },
+  callback_data
+);</code>
+		<p>
+			The <span class="inline_code">event_name</span> has to be originally hooked in xch, otherwise the event will never occur.
+		</p>
+	</div>
+	<div class="section" section_id="gets">
+		<div class="section_label">Gets</div>
+		<p>
+			Additionally, there is a get method to instantly get information from xch:
+		</p>
+<code>var value = xch.api.get("value_name");</code>
+		<p>
+			The <span class="inline_code">value_name</span> has to be originally hooked in xch, otherwise <span class="inline_code">undefined</span> is returned.
+		</p>
+	</div>
+	<div class="section" section_id="header">
+		<div class="section_label">Header</div>
+		<p>
+			The <span class="inline_code">Header</span>'s menu triggers an event upon opening. The <span class="inline_code">event_data</span> format is:
+		</p>
+		<ul class="param_description">
+			<li class="param"><div>menu</div><div><div>the <span class="inline_code">Menu</span> object opened</div></div></li>
+		</ul>
+		<p>
+			For more information on how to modify the <span class="inline_code">Menu</span> object, see the <a href="#!about/api/menu">Menu Object</a> section.
+		</p>
+		<p>
+			Example usage:
+		</p>
+<code>xch.api.on("main_menu_open", function (event) {
+  // Build option
+  var option = {
+    /* build the option here */
+  };
+
+  // Add option to the menu
+  event.menu.add_option(option);
+});</code>
+	</div>
+	<div class="section" section_id="posts">
+		<div class="section_label">Posts</div>
+		<p>
+			There are 2 events related to <span class="inline_code">Post</span> objects:
+		</p>
+		<ul class="param_description">
+			<li class="param"><div>post_prepare</div><div><div>called when a post is added to the document</div></div></li>
+			<li class="param"><div>post_unprepare</div><div><div>called when a post is removed from the document</div></div></li>
+		</ul>
+		<p>
+			Both events have the same <span class="inline_code">event_data</span> format:
+		</p>
+		<ul class="param_description">
+			<li class="param"><div>post</div><div><div>the <span class="inline_code">Post</span> object</div></div></li>
+			<li class="param"><div>post_instance</div><div><div>the <span class="inline_code">Instance</span> of the post</div></div></li>
+		</ul>
+		<p>
+			Additionally, there's a method to get all post that have been loaded:
+		</p>
+<code>var posts = xch.api.get("posts");</code>
+		<p>
+			Example usage:
+		</p>
+<code>var posts = xch.api.get("posts");
+// Iterate over posts
+for (var i = 0, j; i &lt; posts.length; ++i) {
+  for (j = 0; j &lt; posts[i].instances.length; ++j) {
+    // Perform some action on the post
+    some_function(posts[i], posts[i].instances[j]);
+  }
+}</code>
+		<div class="sub_section">
+			<div class="sub_section_label">Post Objects</div>
+			<p>
+				<span class="inline_code">Post</span> objects should be treated as read-only, and most prototype functions should also not even be called. However, here's a list of useful members:
+			</p>
+			<ul class="param_description">
+				<li class="param"><div>id</div><div><div>the id of the post</div></div></li>
+				<li class="param"><div>op</div><div><div><span class="inline_code">true</span> if the post is an OP</div></div></li>
+				<li class="param"><div>image</div><div><div>an <span class="inline_code">Image</span> object of the post, or <span class="inline_code">null</span></div></div></li>
+				<li class="param"><div>timestamp</div><div><div>timestamp of the post in milliseconds</div></div></li>
+				<li class="param"><div>deleted</div><div><div><span class="inline_code">true</span> if the post has been deleted</div></div></li>
+				<li class="param"><div>instances</div><div><div>an array of the visible instances of the post</div></div></li>
+			</ul>
+		</div>
+		<div class="sub_section">
+			<div class="sub_section_label">Post Instances</div>
+			<p>
+				<span class="inline_code">Post.Instance</span> objects should also be treated as read-only. These are the relevant members of an instance:
+			</p>
+			<ul class="param_description">
+				<li class="param"><div>container</div><div><div>the HTML element of the post instance, wrapped with jQuery</div></div></li>
+			</ul>
+		</div>
+		<div class="sub_section">
+			<div class="sub_section_label">Post Images</div>
+			<p>
+				<span class="inline_code">Image</span> objects are also read-only. These are the relevant members of an image:
+			</p>
+			<ul class="param_description">
+				<li class="param"><div>url</div><div><div>the link to the image, or <span class="inline_code">null</span> if the image has been deleted</div></div></li>
+				<li class="param"><div>thumbnail</div><div><div>the link to the thumbnail image (may link to a spoiler image/deleted file image)</div></div></li>
+				<li class="param"><div>extension</div><div><div>file extension of the image</div></div></li>
+				<li class="param"><div>filename_server</div><div><div>server's filename</div></div></li>
+				<li class="param"><div>filename_original</div><div><div>original filename</div></div></li>
+				<li class="param"><div>width</div><div><div>width of the image</div></div></li>
+				<li class="param"><div>height</div><div><div>height of the image</div></div></li>
+				<li class="param"><div>thumbnail_width</div><div><div>width of the thumbnail</div></div></li>
+				<li class="param"><div>thumbnail_height</div><div><div>height of the thumbnail</div></div></li>
+				<li class="param"><div>spoiler</div><div><div><span class="inline_code">true</span> if the image is spoilered</div></div></li>
+				<li class="param"><div>deleted</div><div><div><span class="inline_code">true</span> if the image has been deleted</div></div></li>
+			</ul>
+		</div>
+	</div>
+	<div class="section" section_id="message">
+		<div class="section_label">Message Objects</div>
+		<p>
+			<span class="inline_code">Message</span> objects are the notifications that appear below the header to alert the user of something. They can be one of several colors, and can be interactive if necessary.
+		</p>
+		<p>
+			<span class="inline_code">Message</span> objects are created in the following way:
+		</p>
+<code>var message = new xch.Message({
+  /* Message parameters */
+});</code>
+		<p>
+			And messages can take the following parameters:
+		</p>
+		<ul class="param_description">
+			<li class="param">
+				<div>type</div><div><div>
+				<p>
+					the type of the message, which corresponds to its color; values are:
+				</p>
+				<ul class="param_description">
+					<li class="param"><div>"parse"</div><div><div>purple</div></div></li>
+					<li class="param"><div>"good"</div><div><div>blue</div></div></li>
+					<li class="param"><div>"okay"</div><div><div>green</div></div></li>
+					<li class="param"><div>"info"</div><div><div>yellow</div></div></li>
+					<li class="param"><div>"bad"</div><div><div>red</div></div></li>
+					<li class="param"><div>"plain"</div><div><div>white; also the default</div></div></li>
+				</ul>
+				</div></div>
+			</li>
+			<li class="param"><div>title</div><div><div>the title of the message</div></div></li>
+			<li class="param"><div>html</div><div><div>the body of the message, using a DOM node or jQuery object</div></div></li>
+			<li class="param"><div>text</div><div><div>the body of the message, using a string</div></div></li>
+			<li class="param"><div>on</div><div><div>specify event callbacks; see <a href="#!about/api/callbacks">Callbacks</a></div></div></li>
+			<li class="param"><div>closeable</div><div><div><span class="inline_code">true</span> if the message is closeable, <span class="inline_code">false</span> if it's only minimizable</div></div></li>
+			<li class="param"><div>life</div><div><div>seconds the message should live for, or 0 for no countdown</div></div></li>
+		</ul>
+		<p>
+			Messages will trigger 1 type of event:
+		</p>
+		<ul class="param_description">
+			<li class="param"><div>close</div><div><div>called when the message is closed</div></div></li>
+		</ul>
+	</div>
+	<div class="section" section_id="popup">
+		<div class="section_label">Popup Objects</div>
+		<p>
+			<span class="inline_code">Popup</span> objects are obviously popups that can be grabbed and moved about the screen. They typically contain a message, some buttons, and/or a textarea.
+		</p>
+		<p>
+			<span class="inline_code">Popup</span> objects are created in the following way:
+		</p>
+<code>var message = new xch.Popup({
+  /* Popup parameters */
+});</code>
+		<p>
+			And popups can take the following parameters:
+		</p>
+		<ul class="param_description">
+			<li class="param"><div>title</div><div><div>the title of the message</div></div></li>
+			<li class="param"><div>html</div><div><div>the body of the popup, using a DOM node or jQuery object</div></div></li>
+			<li class="param"><div>text</div><div><div>the body of the popup, using a string</div></div></li>
+			<li class="param"><div>no_close</div><div><div><span class="inline_code">true</span> if there should be no "x" to close button</div></div></li>
+			<li class="param"><div>on</div><div><div>specify event callbacks; see <a href="#!about/api/callbacks">Callbacks</a></div></div></li>
+			<li class="param param_object"><div>size</div><div><div>
+				<ul class="param_description">
+					<li class="param"><div>width</div><div><div>the width (in pixels) of the popup</div></div></li>
+				</ul>
+			</div></div></li>
+			<li class="param param_object"><div>textarea</div><div><div>
+				<ul class="param_description">
+					<li class="param"><div>value</div><div><div>the text value of the textarea</div></div></li>
+					<li class="param"><div>height</div><div><div>the height (in pixels) of the textarea</div></div></li>
+					<li class="param"><div>readonly</div><div><div><span class="inline_code">true</span> if the textarea should be read-only</div></div></li>
+					<li class="param"><div>single_line</div><div><div><span class="inline_code">true</span> if the textarea should be a single line</div></div></li>
+				</ul>
+			</div></div></li>
+			<li class="param param_object param_array"><div>buttons</div><div><div>
+				<div class="param param_object param_nameless"><div><div>
+					<ul class="param_description">
+						<li class="param"><div>text</div><div><div>body of the button, using a string</div></div></li>
+						<li class="param"><div>html</div><div><div>body of the button, using a DOM node or jQuery object</div></div></li>
+						<li class="param"><div>on</div><div><div>jQuery event callbacks; see <a href="#!about/api/callbacks">Callbacks</a></div></div></li>
+					</ul>
+				</div></div></div>
+				<p class="inline_code">
+					// Array of the above structure
+				</p>
+			</div></div></li>
+		</ul>
+		<p>
+			Popups will trigger 1 type of event:
+		</p>
+		<ul class="param_description">
+			<li class="param"><div>close</div><div><div>called when the popup is closed</div></div></li>
+		</ul>
+	</div>
+	<div class="section" section_id="menu">
+		<div class="section_label">Menu Objects</div>
+		<p>
+			Once created, menu options can be added to a <span class="inline_code">Menu</span> object using the following method:
+		</p>
+<code>menu.add_option({
+  /* Option parameters */
+});</code>
+		<p>
+			The following are valid option parameters:
+		</p>
+		<ul class="param_description">
+			<li class="param"><div>expand_on_click</div><div><div><span class="inline_code">false</span> if the option shouldn't expand when clicked</div></div></li>
+			<li class="param"><div>expand_on_hover</div><div><div><span class="inline_code">false</span> if the option shouldn't expand when hovered</div></div></li>
+			<li class="param"><div>html</div><div><div>the body of the option, using a DOM node or jQuery object</div></div></li>
+			<li class="param"><div>text</div><div><div>the body of the option, using a string</div></div></li>
+			<li class="param"><div>on</div><div><div>specify jQuery event callbacks; see <a href="#!about/api/callbacks">Callbacks</a></div></div></li>
+		</ul>
+		<p>
+			An <span class="inline_code">Option</span>'s parent menu can be accessed using <span class="inline_code">option.menu</span>
+		</p>
+	</div>
+	<div class="section" section_id="callbacks">
+		<div class="section_label">Callbacks</div>
+		<p>
+			There are two types of callbacks: xch callbacks and jQuery callbacks.
+		</p>
+		<p>
+			xch callbacks and jQuery callbacks can be defined in one of the following formats:
+		</p>
+		<div>
+			<p><b>Format 1</b>:</p>
+			<ul class="param_description">
+				<li class="param param_object"><div>on</div><div><div>
+					<ul class="param_description">
+						<li class="param"><div>event_name</div><div><div>your event handling function</div></div></li>
+					</ul>
+					<p class="inline_code">
+						// Continued for any other events
+					</p>
+				</div></div></li>
+			</ul>
+		</div>
+		<div>
+			<p><b>Format 2</b>:</p>
+			<ul class="param_description">
+				<li class="param param_object"><div>on</div><div><div>
+					<ul class="param_description">
+						<li class="param param_object"><div>event_name</div><div><div>
+							<ul class="param_description">
+								<li class="param"><div>callback_data</div><div><div>custom data to be passed to the callback</div></div></li>
+								<li class="param"><div>callback</div><div><div>your event handling function
+								</div></div></li>
+							</ul>
+						</div></div></li>
+					</ul>
+					<p class="inline_code">
+						// Continued for any other events
+					</p>
+				</div></div></li>
+			</ul>
+		</div>
+		<p>
+			For an xch callback, the event handling function's parameter list looks like the following:
+		</p>
+<code>function (event_data, callback_data, event_name) {
+  // with this instanceof "whatever it was bound to"
+  // Handle event
+}</code>
+		<p>
+			For a jQuery callback, the event handling function's parameter list looks like the following:
+		</p>
+<code>function (event) {
+  // with this instanceof "some DOM node"
+  // callback_data = event.data.callback_data
+  // event_name = event.type
+  // source = event.data.[message|popup|option]
+  // Handle event
+}</code>
+		<p>
+			Additionally, for jQuery events, the <span class="inline_code">event.data</span> value will contain a parameter to get the original object. This typically falls under one of the following:
+		</p>
+		<ul class="param_description">
+			<li class="param"><div>message</div><div><div>the original <span class="inline_code">Message</span> object</div></div></li>
+			<li class="param"><div>popup</div><div><div>the original <span class="inline_code">Popup</span> object</div></div></li>
+			<li class="param"><div>option</div><div><div>the original <span class="inline_code">Menu.Option</span> object</div></div></li>
+		</ul>
+	</div>
+	<div class="section"></div>
+</div>
+</div>
+</div>
+</body>
+</html>

@@ -2,8 +2,8 @@
 <html>
 <head>
 	<meta charset="UTF-8" />
-	<meta name="description" content="Youtube, Vimeo, Soundcloud, and Sounds playback" />
-	<meta name="keywords" content="4chan,sound,sounds,media,player,youtube,soundcloud,vimeo,embed,embedding,stego,steganography,4cs,dnsev,userscript,greasemonkey,tampermonkey,firefox,chrome,sound player,4chan sound player,media player,4chan media player" />
+	<meta name="description" content="Tinyboard userscript extension" />
+	<meta name="keywords" content="xch,tinyboard,38chan,dnsev,userscript,extension,greasemonkey,tampermonkey,firefox,chrome" />
 	<meta name="author" content="dnsev" />
 	<title>xch</title>
 	<link rel="stylesheet" href="style.css" />
@@ -25,16 +25,16 @@
 			<div class="content_container_main">
 
 				<div id="content_install" class="content hidden">
-					<div class="section_label"><span class="browser_header_icon firefox"></span><span class="browser_header firefox">Firefox</span><span>:</span></div>
 					<div class="section">
+						<div class="section_label"><span class="browser_header_icon firefox"></span><span class="browser_header firefox">Firefox</span><span>:</span></div>
 						<ol>
 							<li><span>Install </span><a href="https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/" target="_blank">Greasemonkey</a></li>
 							<li><a class="install_link" href="https://raw.github.com/dnsev/xch/master/builds/main/xch.user.js">Install xch</a></li>
 						</ol>
 					</div>
 
-					<div class="section_label"><span class="browser_header_icon chrome"></span><span class="browser_header chrome">Chrome</span><span>:</span></div>
 					<div class="section">
+						<div class="section_label"><span class="browser_header_icon chrome"></span><span class="browser_header chrome">Chrome</span><span>:</span></div>
 						<ol>
 							<li><a download class="install_link" href="https://raw.github.com/dnsev/xch/master/builds/main/xch.user.js">Download xch</a><span> to your computer (save as...)</span></li>
 							<li><span>Open </span><a href="chrome://extensions" target="_blank">chrome://extensions</a><span> in your browser</span></li>
@@ -43,10 +43,35 @@
 					</div>
 				</div>
 
+				<div id="content_install_update" class="content hidden">
+					<div class="section">
+						<div class="section_label"><span class="browser_header_icon firefox"></span><span class="browser_header firefox">Firefox</span><span>:</span></div>
+						<ol>
+							<li><a class="install_link" href="https://raw.github.com/dnsev/xch/master/builds/main/xch.user.js">Update xch</a><span> through Greasemonkey</span></li>
+						</ol>
+					</div>
+
+					<div class="section">
+						<div class="section_label"><span class="browser_header_icon chrome"></span><span class="browser_header chrome">Chrome</span><span>:</span></div>
+						<ol>
+							<li><a download class="install_link" href="https://raw.github.com/dnsev/xch/master/builds/main/xch.user.js">Download xch</a><span> to your computer (save as...)</span></li>
+							<li><span>Open </span><a href="chrome://extensions" target="_blank">chrome://extensions</a><span> in your browser</span></li>
+							<li><span>Update xch by dragging </span><span class="inline_code">xch.user.js</span><span> into the tab</span></li>
+						</ol>
+					</div>
+				</div>
+
 				<div id="content_about" class="content hidden">
 					<p class="inverse_indent">
-						<b>xch</b> is a userscript for 38chan.net designed to make board usage easier and have more features than the vanilla setup.
+						<b>xch</b> is a userscript for <a href="https://github.com/savetheinternet/Tinyboard" target="_blank">Tinyboard</a>-based image boards designed to make enhance browsing capabilities.
 					</p>
+					<p class="inverse_indent">
+						Also included in xch is an API to allow interaction with other scripts. Check <a href="#!about/api">here</a> for API documentation.
+					</p>
+				</div>
+
+				<div id="content_about_api" class="content hidden">
+					<div class="loading_message" message="Loading documentation..."></div>
 				</div>
 
 				<div id="content_changes" class="content hidden">
