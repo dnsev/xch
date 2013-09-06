@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2.2.3
+// @version     0.2.2.4
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -34,6 +34,7 @@ var xch = (function () {
 	var info = null;
 	var content = null;
 	var api = null;
+	var settings = null;
 
 	// Vars
 	var xch = {
@@ -326,6 +327,9 @@ var xch = (function () {
 							// Register addon
 							xch.script.register(html, xch.script.name, xch.script.version);
 
+							// Settings
+							settings = new xch.Settings();
+
 							// Info
 							info = new xch.Information(meta, html);
 
@@ -375,82 +379,6 @@ var xch = (function () {
 				}
 			}
 
-		},
-
-		settings: {
-			parsing_group: {
-				size: 20,
-				interval: 0.0625,
-				use_single: true
-			},
-			image_preview: {
-				"default": ".jpg",
-				enabled: {
-					".jpg": true,
-					".png": true,
-					".gif": true,
-					spoiler: true
-				},
-				open_timeout: 0.0,
-				open_timeout_spoiler: 0.25,
-				zooming: {
-					enabled: true,
-					bounded: true,
-					invert: false
-				},
-				upscale: false,
-				click: {
-					if_closed: "toggle", // toggle,tab,embed,nothing
-					if_open: "embed"
-				},
-				close_on_click: true
-			},
-			sourcing: {
-				source_text: "https://www.google.com/searchbyimage?image_url=%thumbnail;text:google;if_spoiler:false\n> https://www.google.com/searchbyimage?image_url=%thumbnail;text:Thumbnail\n> https://www.google.com/searchbyimage?image_url=%image;text:Full image\nhttps://www.google.com/searchbyimage?image_url=%image;text:google;if_not_spoiler:false\nhttp://regex.info/exif.cgi?imgurl=%image;text:exif"
-			},
-			post: {
-				footer_backlinks: false,
-				time: {
-					format: "m/d/y (D) H:i:s",
-					offset: 0
-				},
-				fetching: {
-					new_priority: true
-				},
-				inlining: {
-					highlight_on_hover: {
-						if_floating: {
-							target: true,
-							original: true
-						},
-						if_embedded: {
-							target: true,
-							original: false
-						}
-					},
-					on_screen: {
-						none: {
-							inline: true,
-							embed: true,
-							scroll: true,
-							highlight: true
-						},
-						partial: {
-							inline: true,
-							embed: true,
-							scroll: true,
-							highlight: true
-						},
-						complete: {
-							inline: true,
-							embed: true,
-							scroll: true,
-							highlight: true
-						}
-					},
-					allow_cyclic: false
-				}
-			}
 		},
 
 		mime_types: {
@@ -1067,7 +995,7 @@ var xch = (function () {
 				content: content,
 				communication: communication,
 				location: location,
-				settings: xch.settings,
+				settings: settings,
 				saved_data: sd
 			};
 
@@ -2109,6 +2037,939 @@ var xch = (function () {
 
 		})(),
 
+		// Settings/editor
+		Settings: (function () {
+
+			var Settings = function () {
+
+				this_private.setup.call(this);
+
+				// Values
+				this.popup = null;
+
+				this.events = {
+					close: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					}
+				};
+
+				this.tabs = [];
+				this.tab_current = 0;
+
+			};
+
+			var this_private = {
+
+				setup: function () {
+
+					this.image_preview = {
+						"default": ".jpg",
+						enabled: {
+							".jpg": true,
+							".png": true,
+							".gif": true,
+							spoiler: true
+						},
+						open_timeout: 0.0,
+						open_timeout_spoiler: 0.25,
+						zooming: {
+							enabled: true,
+							bounded: true,
+							invert: false
+						},
+						upscale: false,
+						click: {
+							if_closed: "toggle", // toggle,tab,embed,nothing
+							if_open: "embed"
+						},
+						close_on_click: true
+					};
+					this.sourcing = {
+						source_text: "https://www.google.com/searchbyimage?image_url=%thumbnail;text:google;if_spoiler:false\n> https://www.google.com/searchbyimage?image_url=%thumbnail;text:Thumbnail\n> https://www.google.com/searchbyimage?image_url=%image;text:Full image\nhttps://www.google.com/searchbyimage?image_url=%image;text:google;if_not_spoiler:false\nhttp://regex.info/exif.cgi?imgurl=%image;text:exif"
+					};
+					this.post = {
+						footer_backlinks: false,
+						time: {
+							format: "m/d/y (D) H:i:s",
+							offset: 0
+						},
+						fetching: {
+							new_priority: true,
+							parsing_group: {
+								size: 20,
+								interval: 0.0625,
+								use_single: true
+							}
+						},
+						inlining: {
+							highlight_on_hover: {
+								if_floating: {
+									target: true,
+									original: true
+								},
+								if_embedded: {
+									target: true,
+									original: false
+								}
+							},
+							on_screen: {
+								none: {
+									inline: true,
+									embed: true,
+									scroll: true,
+									highlight: true
+								},
+								partial: {
+									inline: true,
+									embed: true,
+									scroll: true,
+									highlight: true
+								},
+								complete: {
+									inline: true,
+									embed: true,
+									scroll: true,
+									highlight: true
+								}
+							},
+							allow_cyclic: false
+						}
+					};
+
+				},
+
+				on_close: function (event, self) {
+					self.popup = null;
+					this_private.trigger.call(self, "close", {});
+					self.tabs = [];
+				},
+				on_button_click: function (event) {
+					if (event.which != 1) return true;
+
+					switch (event.data.callback_data.button_id) {
+						case 0: // Close
+						{
+							event.data.popup.close();
+						}
+						break;
+						case 1: // Save
+						{
+							// TODO
+						}
+						break;
+					}
+				},
+
+				trigger: function (event, data) {
+					// Trigger an event
+					var e = this.events[event];
+					e.triggering = true;
+					for (var i = 0, j = e.callbacks.length; i < j; ++i) {
+						e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
+					}
+					e.triggering = false;
+					if (e.removals != null) {
+						for (var i = 0; i < e.removals.length; ++i) {
+							this.off(event, e.removals[i]);
+						}
+						e.removals = null;
+					}
+				},
+
+				create_item: function (params, data) {
+					// Create
+					var e = null;
+
+					// Title and description
+					if ("label" in params) {
+						if (e == null) e = style.e("div", "settings_section_item");
+						e.append(
+							style.e("div", "settings_section_item_label")
+							.text(params.label)
+						);
+					}
+					if ("description" in params) {
+						if (e == null) e = style.e("div", "settings_section_item");
+						var d;
+						e.append(
+							(d = style.e("div", "settings_section_item_description"))
+						);
+						if (typeof(d) == typeof("")) {
+							d.text(params.description);
+						}
+						else {
+							d.html(params.description);
+						}
+					}
+					if (e == null && !("pre" in data)) {
+						e = style.e("div", "settings_section_item");
+					}
+
+					// Value
+					var v_after = false;
+					var v = null;
+					var val = params.value;
+					if (val.type == "boolean") {
+						if (val.select == "checkbox") {
+							(v = style.checkbox(false, "normal"))
+							.addClass("settings_value_checkbox_container")
+							.append(
+								style.e("span", "settings_value_checkbox_display")
+								.attr("value_on", val.on || "Enabled")
+								.attr("value_off", val.off || "Disabled")
+							);
+							v.find("input").on("change", { self: this, params: params }, this_private.on_input_checkbox_change);
+						}
+					}
+					else if (val.type == "integer" || val.type == "number") {
+						if (val.select == "textbox") {
+							(v = style.e("input", "popup_input settings_value_input"))
+							.attr("type", "text");
+							v.on("change", { self: this, params: params }, this_private.on_input_textbox_change);
+							v.on("focus", { self: this, params: params }, this_private.on_input_textbox_focus);
+							v.on("blur", { self: this, params: params }, this_private.on_input_textbox_blur);
+						}
+						else if (val.select == "slider") {
+							(v = style.e("div", "settings_value_slider"))
+							.append(
+								style.e("div", "settings_value_slider_inner_1")
+								.append(
+									style.e("div", "settings_value_slider_inner_2")
+									.append(
+										style.e("div", "settings_value_slider_grabber")
+									)
+								)
+							)
+							.append(
+								style.e("div", "settings_value_slider_value_display")
+								.attr("display_value", "0.325")
+								.attr("display_units", "seconds")
+							);
+
+							v.children(".settings_value_slider_inner_1")
+							.on("mousedown", { self: this, params: params }, this_private.on_input_slider_mousedown)
+							.on("mouseup", { self: this, params: params }, this_private.on_input_slider_mouseup);
+
+							v.find(".settings_value_slider_grabber")
+							.on("mousedown", { self: this, params: params }, this_private.on_input_slider_grabber_mousedown)
+							.on("mouseup", { self: this, params: params }, this_private.on_input_slider_grabber_mouseup);
+						}
+					}
+
+					// Add
+					if (v != null) {
+						// Wrap
+						var v2 = style.e("div", "settings_value_item");
+						v2.append(v);
+						v = v2;
+					}
+					if (e != null) {
+						if (v != null) {
+							if (v_after) {
+								e.append(
+									style.e("div", "settings_value_container full")
+									.append(v)
+								);
+							}
+							else {
+								e.prepend(
+									style.e("div", "settings_value_container")
+									.append(v)
+								);
+							}
+						}
+						// Update pre
+						data.pre = e;
+					}
+					else {
+						if (v != null) {
+							// Add to previous
+							if (v_after) {
+								var c = (data.pre.find(".settings_value_container.full"));
+								if (c.length == 0) {
+									data.pre.append(
+										(c = style.e("div", "settings_value_container full"))
+									);
+								}
+								c.append(v);
+							}
+							else {
+								var c = (data.pre.find(".settings_value_container:not(.full)"));
+								if (c.length == 0) {
+									data.pre.prepend(
+										(c = style.e("div", "settings_value_container"))
+									);
+								}
+								c.append(v);
+							}
+						}
+					}
+
+					// Done
+					return e;
+				},
+
+				on_tab_click: function (event) {
+					if (event.which != 1) return true;
+
+					// Hide old tab
+					if (event.data.self.tab_current >= 0) {
+						event.data.self.tabs[event.data.self.tab_current].container.removeClass("current");
+						event.data.self.tabs[event.data.self.tab_current].content.addClass("hidden");
+					}
+
+					// Show new
+					event.data.self.tab_current = event.data.index;
+					event.data.self.tabs[event.data.self.tab_current].container.addClass("current");
+					event.data.self.tabs[event.data.self.tab_current].content.removeClass("hidden");
+				},
+
+				on_input_checkbox_change: function (event) {
+				},
+				on_input_textbox_change: function (event) {
+				},
+				on_input_textbox_focus: function (event) {
+				},
+				on_input_textbox_blur: function (event) {
+				},
+				on_input_slider_mousedown: function (event) {
+				},
+				on_input_slider_mouseup: function (event) {
+				},
+				on_input_slider_grabber_mousedown: function (event) {
+				},
+				on_input_slider_grabber_mouseup: function (event) {
+				}
+
+			};
+
+			Settings.prototype = {
+
+				constructor: Settings,
+
+				add: function (params) {
+					// Get the tab
+					var tab = null;
+					if ("tab" in params) {
+						tab = (params.tab instanceof Tab ? params.tab : this.tab(params.tab));
+					}
+					else {
+						tab = this.tabs[this.tabs.length - 1];
+					}
+
+					// Get the section
+					var section = null;
+					if ("section" in params) {
+						section = (params.section instanceof Section ? params.section : tab.section(params.section));
+					}
+					else {
+						return tab;
+					}
+
+					// Content addition
+					if ("value" in params) {
+						// Remove unneeded
+						delete params["tab"];
+						delete params["section"];
+
+						// Add defaults
+						if (!("mode" in params)) {
+							params.mode = Settings.modes.NORMAL;
+						}
+
+						// Append
+						section.contents.push(params);
+					}
+					else {
+						// Get the section
+						return section;
+					}
+				},
+
+				tab: function (tab_name) {
+					for (var i = 0; i < this.tabs.length; ++i) {
+						if (tab_name == this.tabs[i].name) return this.tabs[i];
+					}
+					var t = new Tab(tab_name);
+					this.tabs.push(t);
+					return t;
+				},
+
+				open: function (init_function) {
+					this.popup = new xch.Popup({
+						title: "Settings",
+						html: this.create(init_function),
+						size: {
+							width: 640,
+							height: "80%"
+						},
+						on: {
+							close: {
+								callback: this_private.on_close,
+								callback_data: this
+							}
+						},
+						no_close: true,
+						buttons: [{
+							text: "Close",
+							on: {
+								click: {
+									callback_data: {
+										self: this,
+										button_id: 0
+									},
+									callback: this_private.on_button_click
+								}
+							}
+						}, {
+							text: "Save",
+							on: {
+								click: {
+									callback_data: {
+										self: this,
+										button_id: 1
+									},
+									callback: this_private.on_button_click
+								}
+							}
+						}]
+					});
+				},
+				is_open: function () {
+					return (this.popup != null);
+				},
+
+				create: function (init_function) {
+					// Init
+					this.tabs = [];
+					this.tab_current = 0;
+					init_function.call(this);
+
+					// Create
+					var html, tab_container, content_container;
+					(html = style.e("div", "settings"))
+					.append( //{
+						style.e("div", "settings_container")
+						.append(
+							style.e("div", "settings_tabs") // tabs
+							.append(
+								style.e("div", "settings_tabs_inner_1")
+								.append(
+									style.e("div", "settings_tabs_end_spacing")
+								)
+								.append(
+									(tab_container = style.e("div", "settings_tabs_inner_2"))
+								)
+								.append(
+									style.e("div", "settings_tabs_end_spacing")
+								)
+							)
+						)
+						.append(
+							style.e("div", "settings_sections") // content container
+							.append(
+								style.e("div", "settings_sections_inner_1")
+								.append(
+									style.e("div", "settings_sections_inner_2")
+									.append(
+										(content_container = style.e("div", "settings_sections_inner_3"))
+									)
+								)
+							)
+						)
+					); //}
+
+					// Tabs
+					for (var i = 0; i < this.tabs.length; ++i) {
+						tab_container.append(
+							(this.tabs[i].container = style.e("div", "settings_tab" + (i == this.tab_current ? " current" : "")))
+							.append(
+								style.e("div", "settings_tab_inner_1")
+								.append(
+									style.e("div", "settings_tab_inner_2")
+									.text(this.tabs[i].name)
+								)
+							)
+						);
+
+						this.tabs[i].container.on("click", { self: this, index: i, tab: this.tabs[i] }, this_private.on_tab_click);
+					}
+
+					// Sections
+					for (var i = 0, j, k, c, s, sec; i < this.tabs.length; ++i) {
+						content_container.append(
+							(c = style.e("div", "settings_content" + (i == this.tab_current ? "" : " hidden")))
+						);
+						this.tabs[i].content = c;
+
+						for (j = 0; j < this.tabs[i].sections.length; ++j) {
+							sec = this.tabs[i].sections[j];
+
+							c.append(
+								style.e("div", "settings_section")
+								.append(
+									style.e("div", "settings_section_title")
+									.text(sec.name)
+								)
+								.append(
+									(s = style.e("div", "settings_section_content"))
+								)
+							);
+
+							var data = {};
+							for (k = 0; k < sec.contents.length; ++k) {
+								// Append
+								s.append(this_private.create_item.call(this, sec.contents[k], data));
+							}
+						}
+					}
+
+					// Done
+					return html;
+				},
+
+				default_settings: function () {
+
+					this.add({
+						tab: "Posts",
+						section: "Appearance",
+						value: {
+							type: "boolean",
+							select: "radio",
+							on: "In footer",
+							off: "In header"
+						},
+						target: "settings.post.footer_backlinks",
+						label: "Post backlink location",
+						description: "What location inside a post the backlinks should be placed",
+						mode: Settings.modes.NORMAL
+					});
+
+					this.add({
+						tab: "Posts",
+						section: "Date formatting",
+						value: {
+							type: "string",
+							select: "textbox"
+						},
+						target: "settings.post.time.format",
+						label: "Time formatting",
+						description: "The time format to use",
+						mode: Settings.modes.NORMAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Date formatting",
+						value: {
+							type: "integer",
+							select: "textbox",
+							min: 0,
+							max: 86400,
+							units: "seconds"
+						},
+						target: "settings.post.time.offset",
+						label: "Timezone offset",
+						description: "Time to offset the server time by (in seconds)",
+						mode: Settings.modes.NORMAL
+					});
+
+					this.add({
+						tab: "Posts",
+						section: "Fetching",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Enabled",
+							off: "Disabled"
+						},
+						target: "settings.post.fetching.new_priority",
+						label: "New post priority",
+						description: "Prioritize new posts when parsing a thread",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Parsing Groups",
+						value: {
+							type: "integer",
+							select: "textbox",
+							min: 0,
+							custom: {
+								0: "Infinite"
+							}
+						},
+						target: "settings.post.fetching.parsing_group.size",
+						label: "Group size",
+						description: "Number of posts to parse per group",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Parsing Groups",
+						value: {
+							type: "number",
+							select: "slider",
+							min: 0,
+							max: 1,
+							decimals: 4,
+							snap: 0.0625,
+							units: "seconds"
+						},
+						target: "settings.post.fetching.parsing_group.interval",
+						label: "Group timeout interval",
+						description: "Timeout between parsing groups",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Parsing Groups",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Single",
+							off: "Multiple"
+						},
+						target: "settings.post.fetching.parsing_group.use_single",
+						label: "Parsing queue count",
+						description: "Use a single parsing queue for all threads",
+						mode: Settings.modes.TECHNICAL
+					});
+
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Allow cycles",
+							off: "No cycles"
+						},
+						target: "settings.post.inlining.allow_cyclic",
+						label: "Allow cyclic embedding",
+						description: "Allow the same post to be embedded multiple times in the same expansion chain",
+						mode: Settings.modes.NORMAL
+					});
+
+					this.add({
+						tab: "Posts",
+						section: "Inline Highlighting",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Highlight",
+							off: "Do nothing"
+						},
+						target: "settings.post.inlining.highlight_on_hover.if_floating.original",
+						label: "Highlight original (floating)",
+						description: "Highlight the original post when the target isn't embedded",
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Highlighting",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Highlight",
+							off: "Do nothing"
+						},
+						target: "settings.post.inlining.highlight_on_hover.if_embedded.original",
+						label: "Highlight original (embedded)",
+						description: "Highlight the original post when the target is embedded",
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Highlighting",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Highlight",
+							off: "Do nothing"
+						},
+						target: "settings.post.inlining.highlight_on_hover.if_floating.target",
+						label: "Highlight cyclic (floating)",
+						description: "Highlight the same post in the expansion when the target isn't embedded",
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Highlighting",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Highlight",
+							off: "Do nothing"
+						},
+						target: "settings.post.inlining.highlight_on_hover.if_embedded.target",
+						label: "Highlight cyclic (embedded)",
+						description: "Highlight the same post in the expansion when the target is embedded",
+						mode: Settings.modes.ADVANCED
+					});
+
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Display floating post",
+							off: "No floating post"
+						},
+						target: "settings.post.inlining.on_screen.complete.inline",
+						label: "When original post is completely on screen",
+						description: "What actions to take when the referenced post is completely on screen",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Embed on click",
+							off: "Don't embed"
+						},
+						target: "settings.post.inlining.on_screen.complete.embed",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Scroll to original on click",
+							off: "Don't scroll"
+						},
+						target: "settings.post.inlining.on_screen.complete.embed",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Highlight original on click",
+							off: "Don't highlight"
+						},
+						target: "settings.post.inlining.on_screen.complete.highlight",
+						mode: Settings.modes.TECHNICAL
+					});
+
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Display floating post",
+							off: "No floating post"
+						},
+						target: "settings.post.inlining.on_screen.partial.inline",
+						label: "When original post is partially on screen",
+						description: "What actions to take when the referenced post is partially on screen",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Embed on click",
+							off: "Don't embed"
+						},
+						target: "settings.post.inlining.on_screen.partial.embed",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Scroll to original on click",
+							off: "Don't scroll"
+						},
+						target: "settings.post.inlining.on_screen.partial.embed",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Highlight original on click",
+							off: "Don't highlight"
+						},
+						target: "settings.post.inlining.on_screen.partial.highlight",
+						mode: Settings.modes.TECHNICAL
+					});
+
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Display floating post",
+							off: "No floating post"
+						},
+						target: "settings.post.inlining.on_screen.none.inline",
+						label: "When original post is not on screen",
+						description: "What actions to take when the referenced post is completely off screen",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Embed on click",
+							off: "Don't embed"
+						},
+						target: "settings.post.inlining.on_screen.none.embed",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Scroll to original on click",
+							off: "Don't scroll"
+						},
+						target: "settings.post.inlining.on_screen.none.embed",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: "Posts",
+						section: "Inline Expansion Actions",
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Highlight original on click",
+							off: "Don't highlight"
+						},
+						target: "settings.post.inlining.on_screen.none.highlight",
+						mode: Settings.modes.TECHNICAL
+					});
+
+					this.add({
+						tab: "Sourcing",
+						section: "Image Sourcing",
+						value: {
+							type: "string",
+							select: "textarea"
+						},
+						target: "settings.sourcing.source_text",
+						label: "Sourcing info for images",
+						description: (
+							style.e("div")
+							.append(style.t("Available modifiers are:"))
+							.append(style.e("br"))
+							.append(style.t("%board - board letter"))
+							.append(style.e("br"))
+							.append(style.t("%thread_id - id number of the thread"))
+							.append(style.e("br"))
+							.append(style.t("%post_id - id number of the post"))
+							.append(style.e("br"))
+							.append(style.t("%thumbnail - url of the thumbnail image"))
+							.append(style.e("br"))
+							.append(style.t("%image - url of the full image"))
+							.append(style.e("br"))
+							.append(style.t("The % symbol can be escaped by placing 2 %'s in a row."))
+							.append(style.e("br"))
+							.append(style.t("A modifier can have a letter directly following it by using %modifier\\after_text."))
+							.append(style.e("br"))
+							.append(style.t("Empty lines and lines beginning with a # are ignored."))
+							.append(style.e("br"))
+							.append(style.t("Lines beginning with > symbols are treated as sub-menus."))
+						),
+						save: null,
+						update: null,
+						mode: Settings.modes.NORMAL
+					});
+
+				},
+
+				on: function (event, callback, callback_data) {
+					if (event in this.events) {
+						this.events[event].callbacks.push([callback, callback_data]);
+					}
+				},
+				off: function (event, callback) {
+					if (event in this.events) {
+						var e = this.events[event];
+						if (e.triggering) {
+							if (e.removals == null) e.removals = [];
+							e.removals.push(callback);
+						}
+						else {
+							e = e.callbacks;
+							for (var i = 0; i < e.length; ++i) {
+								if (e[i][0] == callback) {
+									e.splice(i, 1);
+									--i;
+								}
+							}
+						}
+					}
+				}
+
+			};
+
+			Settings.modes = {
+				NORMAL: 7,
+				ADVANCED: 6,
+				TECHNICAL: 4,
+				NORMAL_ONLY: 1,
+				ADVANCED_ONLY: 2,
+				TECHNICAL_ONLY: 4
+			};
+
+			var Tab = function (name) {
+				this.name = name;
+				this.sections = [];
+				this.container = null;
+				this.content = null;
+			};
+			Tab.prototype = {
+
+				constructor: Tab,
+
+				section: function (section_name) {
+					for (var i = 0; i < this.sections.length; ++i) {
+						if (section_name == this.sections[i].name) return this.sections[i];
+					}
+					var s = new Section(section_name);
+					this.sections.push(s);
+					return s;
+				}
+
+			};
+
+			var Section = function (name) {
+				this.name = name;
+				this.contents = [];
+			};
+			Section.prototype = {
+
+				constructor: Section
+
+			};
+
+			return Settings;
+
+		})(),
+
 
 		// API
 		API: (function () {
@@ -3067,7 +3928,7 @@ var xch = (function () {
 
 					event.data.option.menu.close();
 
-					this_private.open_settings.call(event.data.callback_data);
+					event.data.callback_data.open_settings();
 
 					return false;
 				},
@@ -3225,24 +4086,9 @@ var xch = (function () {
 						}
 					});
 				},
-				open_settings: function () {
-					if (this.settings_popup != null && this.settings_popup.open) return;
 
-					this.settings_popup = new xch.Popup({
-						title: "Settings",
-						text: "Settings are not available yet, please wait warmly.",
-						size: {
-							width: 180
-						},
-						on: {
-							close: {
-								callback: function (event, self) {
-									self.settings_popup = null;
-								},
-								callback_data: this
-							}
-						}
-					});
+				on_settings_close: function (event, self) {
+					settings.off("close", this_private.on_settings_close);
 				},
 
 				update_screen_area: function () {
@@ -3287,6 +4133,22 @@ var xch = (function () {
 						width: this.screen_area.width,
 						height: this.screen_area.height
 					};
+				},
+
+				open_settings: function () {
+					new xch.Popup({
+						title: "Settings",
+						text: "Settings are not available yet, please wait warmly.",
+						size: {
+							width: 180
+						}
+					});
+					return;
+
+					if (settings.is_open()) return;
+
+					settings.on("close", this_private.on_settings_close, this);
+					settings.open(settings.default_settings);
 				},
 
 				format_board_info: function (str) {
@@ -6262,7 +7124,7 @@ var xch = (function () {
 					this_private.set_thread.call(self, event.thread);
 					content.off("thread_new", this_private.on_content_thread_new);
 				},
-				on_content_thread_load: function (event) {
+				on_content_thread_load: function (event, self) {
 					if (event.thread == self.thread && self.first_load) {
 						// Completed
 						this_private.thread_loaded_first.call(self);
@@ -7410,7 +8272,7 @@ var xch = (function () {
 					this.context = new xch.Content.Context({
 						info: new_info,
 						html: html,
-						post_queue: (xch.settings.parsing_group.use_single ? content.main_context.post_queue : null),
+						post_queue: (settings.post.fetching.parsing_group.use_single ? content.main_context.post_queue : null),
 						html_target: content.main_context.html,
 						stylize: true,
 						is_new: false,
@@ -8241,7 +9103,7 @@ var xch = (function () {
 			var this_private = {
 
 				init: function (params) {
-					var message_content, title_bar, close;
+					var message_content, title_bar, close, body = null;
 
 					(this.container = style.e("div", "popup"))
 					.append(
@@ -8252,7 +9114,10 @@ var xch = (function () {
 						.append(
 							(title_bar = style.e("div", "popup_title_bar popup_content_item"))
 							.append(
-								(close = style.e("span", "popup_close"))
+								style.e("div", "popup_content_item_inner")
+								.append(
+									(close = style.e("span", "popup_close"))
+								)
 							)
 						)
 					);
@@ -8266,43 +9131,59 @@ var xch = (function () {
 							.text(params.title)
 						);
 					}
-					if ("text" in params) {
-						var d;
+					if ("text" in params || "html" in params || "textarea" in params) {
 						message_content.append(
-							(d = style.e("div", "popup_description popup_content_item"))
+							style.e("div", "popup_body popup_content_item")
+							.append(
+								style.e("div", "popup_body_inner_1 popup_content_item_inner")
+								.append(
+									style.e("div", "popup_body_inner_2")
+									.append(
+										(body = style.e("div", "popup_body_inner_3"))
+									)
+								)
+							)
 						);
-						d.text(params.text);
-					}
-					if ("html" in params) {
-						var d;
-						message_content.append(
-							(d = style.e("div", "popup_description popup_content_item"))
-						);
-						d.html(params.html);
-					}
-					if ("textarea" in params) {
-						if (params.textarea.single_line) {
-							this.text_input = style.e("input", "popup_input popup_content_item").attr("type", "text");
-						}
-						else {
-							this.text_input = style.e("textarea", "popup_input popup_content_item");
-						}
-						message_content.append(this.text_input);
 
-						if ("value" in params.textarea) {
-							this.text_input.val(params.textarea.value);
+						if ("text" in params) {
+							body.append(
+								style.e("div", "popup_description")
+								.text(params.text)
+							);
 						}
-						if ("height" in params.textarea) {
-							this.text_input.css("height", params.textarea.height + "px");
+						if ("html" in params) {
+							body.append(
+								style.e("div", "popup_description")
+								.html(params.html)
+							);
 						}
-						if ("readonly" in params.textarea) {
-							this.text_input.attr("readonly", "readonly");
+						if ("textarea" in params) {
+							if (params.textarea.single_line) {
+								this.text_input = style.e("input", "popup_input").attr("type", "text");
+							}
+							else {
+								this.text_input = style.e("textarea", "popup_input");
+							}
+							body.append(this.text_input);
+
+							if ("value" in params.textarea) {
+								this.text_input.val(params.textarea.value);
+							}
+							if ("height" in params.textarea) {
+								this.text_input.css("height", params.textarea.height + "px");
+							}
+							if ("readonly" in params.textarea) {
+								this.text_input.attr("readonly", "readonly");
+							}
 						}
 					}
 					if ("buttons" in params) {
 						var buttons, button;
 						message_content.append(
-							(buttons = style.e("div", "popup_buttons popup_content_item"))
+							style.e("div", "popup_buttons popup_content_item")
+							.append(
+								(buttons = style.e("div", "popup_content_item_inner"))
+							)
 						);
 						for (var i = 0; i < params.buttons.length; ++i) {
 							buttons.append(
@@ -8327,8 +9208,23 @@ var xch = (function () {
 						}
 					}
 					if ("size" in params) {
+						var bounds = content.header.get_screen_area();
 						if ("width" in params.size) {
-							this.container.css("width", params.size.width + "px");
+							var val = params.size.width;
+							if (typeof(val) != typeof(0)) {
+								var m = /([0-9\.]+)%/.exec(val);
+								if (m) val = parseFloat(m[1]) / 100 * bounds.width;
+							}
+							this.container.css("width", val + "px");
+						}
+						if ("height" in params.size) {
+							var val = params.size.height;
+							if (typeof(val) != typeof(0)) {
+								var m = /([0-9\.]+)%/.exec(val);
+								if (m) val = parseFloat(m[1]) / 100 * bounds.height;
+							}
+							this.container.css("height", val + "px");
+							if (body != null) body.addClass("fixed_height");
 						}
 					}
 					if ("on" in params) {
@@ -8361,7 +9257,7 @@ var xch = (function () {
 				},
 
 				cancel_event: function (event) {
-					return (event.which == 1);
+					return (event.which != 1);
 				},
 
 				on_close_click: function (event) {
@@ -9481,10 +10377,10 @@ var xch = (function () {
 					this_private.load_my_posts.call(this, false);
 				},
 				load_post_settings: function (apply) {
-					var set = xch.get_value("settings_post", xch.settings.post);
-					if (set === xch.settings.post) {
+					var set = xch.get_value("settings_post", settings.post);
+					if (set === settings.post) {
 						// Defaults
-						xch.settings.post.time.offset = -(new Date()).getTimezoneOffset() * 60 * 1000;
+						settings.post.time.offset = -(new Date()).getTimezoneOffset() * 60 * 1000;
 					}
 					else {
 						// TODO
@@ -9692,7 +10588,7 @@ var xch = (function () {
 				},
 
 				update_sourcing: function () {
-					var src = xch.settings.sourcing.source_text;
+					var src = settings.sourcing.source_text;
 					this.sourcing = [];
 
 					var tree = [{
@@ -10256,6 +11152,8 @@ var xch = (function () {
 
 					// Title
 					this.format_title();
+
+					this.header.open_settings(); // TODO
 				},
 				parse: function (context) {
 					var self = this;
@@ -10821,16 +11719,16 @@ var xch = (function () {
 
 			Content.Context = (function () {
 
-				var Context = function (settings) {
-					if (!settings) settings = {};
+				var Context = function (local_settings) {
+					if (!local_settings) local_settings = {};
 
-					this.info = settings.info || null;
-					this.html = settings.html || null;
-					this.is_new = settings.is_new || false;
-					this.stylize = settings.stylize || false;
-					this.html_target = settings.html_target || null;
-					this.post_queue = (settings.post_queue ? settings.post_queue : new xch.PostQueue(xch.settings.parsing_group.size, xch.settings.parsing_group.interval));
-					this.loader = settings.loader || null;
+					this.info = local_settings.info || null;
+					this.html = local_settings.html || null;
+					this.is_new = local_settings.is_new || false;
+					this.stylize = local_settings.stylize || false;
+					this.html_target = local_settings.html_target || null;
+					this.post_queue = (local_settings.post_queue ? local_settings.post_queue : new xch.PostQueue(settings.post.fetching.parsing_group.size, settings.post.fetching.parsing_group.interval));
+					this.loader = local_settings.loader || null;
 
 					this.threads_loaded = 0;
 					this.threads_total = 0;
@@ -10928,7 +11826,7 @@ var xch = (function () {
 
 					// Parse queue
 					var parse_queue_new = [];
-					var parse_queue_old = (xch.settings.post.fetching.new_priority ? [] : parse_queue_new);
+					var parse_queue_old = (settings.post.fetching.new_priority ? [] : parse_queue_new);
 					var parse_queue_length = 0;
 
 					// Create posts
@@ -11374,7 +12272,7 @@ var xch = (function () {
 
 						// Highlighting
 						if (instance != null) {
-							if (xch.settings.post.inlining.highlight_on_hover.if_floating.original) {
+							if (settings.post.inlining.highlight_on_hover.if_floating.original) {
 								instance.post.instances[0].container.addClass("focused");
 							}
 							else {
@@ -11410,11 +12308,11 @@ var xch = (function () {
 							container.css({left:"",top:""});
 
 							// Focus
-							if (xch.settings.post.inlining.highlight_on_hover.if_embedded.target) {
+							if (settings.post.inlining.highlight_on_hover.if_embedded.target) {
 								container.addClass("focused");
 							}
 							if (instance != null) {
-								if (xch.settings.post.inlining.highlight_on_hover.if_embedded.original) {
+								if (settings.post.inlining.highlight_on_hover.if_embedded.original) {
 									instance.post.instances[0].container.addClass("focused");
 								}
 								else {
@@ -11499,10 +12397,10 @@ var xch = (function () {
 						var p_t = (event.data.backlink ? event.data.ref.origin : event.data.ref.target);
 						if (p_t != null) {
 							var cycle_object = null;
-							if (xch.settings.post.inlining.allow_cyclic || (cycle_object = events.check_for_cycle(p_t, event.data.instance)) == null) {
+							if (settings.post.inlining.allow_cyclic || (cycle_object = events.check_for_cycle(p_t, event.data.instance)) == null) {
 								// On screen setting
 								var on_screen = events.check_on_screen.call(this, p_t.instances[0].container, content.header);
-								on_screen = xch.settings.post.inlining.on_screen[on_screen];
+								on_screen = settings.post.inlining.on_screen[on_screen];
 								if (on_screen.inline) {
 									// Create
 									events.create_inline_instance.call(this, event.data, p_t);
@@ -11511,11 +12409,11 @@ var xch = (function () {
 
 							// Highlighting
 							if (cycle_object != null) {
-								if (xch.settings.post.inlining.highlight_on_hover.if_floating.target) {
+								if (settings.post.inlining.highlight_on_hover.if_floating.target) {
 									cycle_object.container.addClass("focused");
 								}
 							}
-							if (xch.settings.post.inlining.highlight_on_hover.if_floating.original) {
+							if (settings.post.inlining.highlight_on_hover.if_floating.original) {
 								p_t.instances[0].container.addClass("focused");
 							}
 						}
@@ -11540,7 +12438,7 @@ var xch = (function () {
 								else {
 									// Highlight if embedded
 									if (!event.data.temporary.hasClass("floating")) {
-										if (xch.settings.post.inlining.highlight_on_hover.if_embedded.target) {
+										if (settings.post.inlining.highlight_on_hover.if_embedded.target) {
 											event.data.temporary.addClass("focused");
 										}
 									}
@@ -11553,10 +12451,10 @@ var xch = (function () {
 					else {
 						// Highlighting
 						if (!event.data.inlined_instance.container.hasClass("floating")) {
-							if (xch.settings.post.inlining.highlight_on_hover.if_embedded.target) {
+							if (settings.post.inlining.highlight_on_hover.if_embedded.target) {
 								event.data.inlined_instance.container.addClass("focused");
 							}
-							if (xch.settings.post.inlining.highlight_on_hover.if_embedded.original) {
+							if (settings.post.inlining.highlight_on_hover.if_embedded.original) {
 								event.data.inlined_instance.post.instances[0].container.addClass("focused");
 							}
 						}
@@ -11602,7 +12500,7 @@ var xch = (function () {
 					var p_t = (event.data.backlink ? event.data.ref.origin : event.data.ref.target);
 					if (p_t != null) {
 						var on_screen = events.check_on_screen.call(this, p_t.instances[0].container, content.header);
-						on_screen = xch.settings.post.inlining.on_screen[on_screen];
+						on_screen = settings.post.inlining.on_screen[on_screen];
 						if (!on_screen.embed) {
 							// Scroll to
 							if (on_screen.scroll) {
@@ -11908,7 +12806,7 @@ var xch = (function () {
 					var obj = $(this);
 					if (obj.attr("href") !== undefined) {
 						// What to do on click
-						var opt = xch.settings.image_preview.click;
+						var opt = settings.image_preview.click;
 						opt = (event.data.preview == null ? opt.if_closed : opt.if_open);
 						var par = obj.parent();
 						if (par.hasClass("embed")) opt = "embed";
@@ -11948,7 +12846,7 @@ var xch = (function () {
 						if (event.data.preview == null) {
 							if (event.data.open_timer === null && event.data.image.previewable()) {
 								// Time
-								var t = xch.settings.image_preview;
+								var t = settings.image_preview;
 								t = (event.data.image.spoiler ? t.open_timeout_spoiler : t.open_timeout);
 								// Spawn
 								events.open_image_preview.call(this, obj, event.data, t);
@@ -12233,7 +13131,7 @@ var xch = (function () {
 						// More header stuff
 						header.append(
 							style.e("span", "post_time")
-							.text(xch.date.format(this.timestamp + xch.settings.post.time.offset, xch.settings.post.time.format))
+							.text(xch.date.format(this.timestamp + settings.post.time.offset, settings.post.time.format))
 						)
 						.append(
 							style.e("a", "post_no")
@@ -12378,7 +13276,7 @@ var xch = (function () {
 					.append(
 						style.e("div", "post_embedded_backlink_container empty")
 					);
-					if (xch.settings.post.footer_backlinks) {
+					if (settings.post.footer_backlinks) {
 						footer.removeClass("hidden");
 					}
 
@@ -13552,7 +14450,7 @@ var xch = (function () {
 					var p = this_private.get_point_in_bounds.call(event.data.self, pos.left, pos.top, inner.width(), inner.height(), event.pageX, event.pageY);
 
 					// Size
-					var max = (xch.settings.image_preview.zooming.invert ? 100 : -100);
+					var max = (settings.image_preview.zooming.invert ? 100 : -100);
 					inner.find(".image_preview_size").css({ // Range: -50% to 50% for the zoomed offset
 						left: ((p.x - 0.5) * max).toFixed(2) + "%",
 						top: ((p.y - 0.5) * max).toFixed(2) + "%"
@@ -13780,10 +14678,10 @@ var xch = (function () {
 					.on("mouseleave", data, this_private.on_preview_mouseleave)
 					.on("mousedown", this_private.cancel_event);
 					outer.on("mousemove", data, this_private.on_preview_mousemove);
-					if (xch.settings.image_preview.close_on_click) {
+					if (settings.image_preview.close_on_click) {
 						outer.on("click", data, this_private.on_preview_click);
 					}
-					if (xch.settings.image_preview.zooming.enabled) {
+					if (settings.image_preview.zooming.enabled) {
 						outer.on("mousewheel DOMMouseScroll", { self: this, event_data: event_data, obj: obj }, this_private.on_preview_mousescroll);
 					}
 
@@ -13851,7 +14749,7 @@ var xch = (function () {
 					var w = this.width;
 					var h = this.height;
 					var scale = Math.min(bounds.width / w, bounds.height / h);
-					if (!xch.settings.image_preview.upscale) scale = Math.min(1, scale);
+					if (!settings.image_preview.upscale) scale = Math.min(1, scale);
 
 					// Size CSS
 					w = this.width * scale * event_data.zoom;
@@ -13886,7 +14784,7 @@ var xch = (function () {
 					});
 
 					// Mouse bounding
-					if (mouse_bounded && xch.settings.image_preview.zooming.bounded) {
+					if (mouse_bounded && settings.image_preview.zooming.bounded) {
 						var b = 0;
 						if (event_data.mouse_last.x > left + w_outer + win_scroll.left) {
 							b |= 1;
@@ -13946,11 +14844,11 @@ var xch = (function () {
 
 				previewable: function () {
 					// Spoiler check
-					var en = xch.settings.image_preview.enabled;
+					var en = settings.image_preview.enabled;
 					if (this.spoiler && !en.spoiler) return false;
 					// Extension check
 					var ext = this.extension;
-					if (!(ext in en)) ext = xch.settings.image_preview["default"];
+					if (!(ext in en)) ext = settings.image_preview["default"];
 					return en[ext];
 				}
 
@@ -14718,7 +15616,7 @@ var xch = (function () {
 					bg: {
 						size: 4,
 						radius: 8,
-						opacity: 0.75,
+						opacity: 1,
 						color: "#d6d6f0",
 						shadow: {
 							color: "#34345c",
@@ -15055,6 +15953,128 @@ var xch = (function () {
 					}
 				};
 
+				this.settings = {
+					font: {
+						size: "14px"
+					},
+					tabs: {
+						bg: {
+							0: "#ffffff",
+							100: "rgba(255,255,255,0)",
+							direction: "t2b"
+						},
+						border_outer: {
+							size: 1,
+							style: "solid",
+							color: "#34345c",
+							color_inactive: "#5c6f85",
+							radius: 6
+						},
+						title: {
+							font: {},
+							shadow: {
+								offset: {
+									left: 0,
+									top: 0
+								},
+								color: "#f8f8f8",
+								blur: 2,
+								factor: 3
+							},
+							current: {
+								shadow: {
+									offset: {
+										left: 0,
+										top: 0
+									},
+									color: "#d6daf0",
+									blur: 2,
+									factor: 3
+								}
+							}
+						}
+					},
+					inputs: {
+						text_color: {
+							normal: "#5c6f85",
+							hover: "#080808"
+						},
+						textbox: {
+							width: 100
+						},
+						slider: {
+							width: 100,
+							height: 16,
+							grabber_size: 4,
+							border: {
+								color: "#34345c",
+								size: 1,
+								style: "solid",
+								radius: 4
+							},
+							line_size: 1,
+							colors: {
+								line: {
+									top: "#5c6f85",
+									bottom: "#f8f8f8"
+								},
+								grabber: {
+									bg: "#f8f8f8"
+								}
+							}
+						}
+					},
+					section: {
+						separator: {
+							padding: {
+								left: 6,
+								top: 0,
+								right: 6,
+								bottom: 10
+							},
+							colors: {
+								top: "#5c6f85",
+								bottom: "#f8f8f8"
+							},
+							style: "solid",
+							size: 1
+						},
+						label: {
+							font: {
+								size: "16px",
+								weight: "bold"
+							}
+						},
+						padding: {
+							left: 12,
+							right: 12,
+							top: 10,
+							bottom: 10
+						},
+						item: {
+							label: {
+								font: {
+									weight: "bold"
+								}
+							},
+							colors: {
+								bg_odd: "rgba(255,255,255,0.25)",
+								bg_hover: "rgba(255,255,255,0.5)"
+							},
+							hover_shadow: {
+								color: "rgba(255,255,255,0.5)",
+								offset: {
+									left: 0,
+									top: 0
+								},
+								blur: 4,
+								size: 2
+							},
+							padding: 2
+						}
+					}
+				};
+
 				// Insert stylesheet
 				head.append( //{ Stylesheet
 					(this.style_tag = $(document.createElement("style")))
@@ -15342,19 +16362,20 @@ var xch = (function () {
 						//}
 
 						//{ Checkboxes
-						'$.checkbox{display:inline-block;background-color:<<checkbox_settings.colors.bg>>;border-style:solid;border-color:<<checkbox_settings.colors.border>>;overflow:hidden;cursor:pointer;vertical-align:middle;margin:0px;padding:0px;<<css.box-sizing>>:border-box;}\n' +
-						'$.checkbox:hover{border-color:<<checkbox_settings.colors.border_hover>>;background-color:<<checkbox_settings.colors.bg_hover>>;}\n' +
+						'$.checkbox{display:inline-block;line-height:0;cursor:pointer;}\n' +
+						'$.checkbox_indicator{vertical-align:middle;display:inline-block;line-height:0;background-color:<<checkbox_settings.colors.bg>>;border-style:solid;border-color:<<checkbox_settings.colors.border>>;overflow:hidden;cursor:pointer;vertical-align:middle;margin:0px;padding:0px;<<css.box-sizing>>:border-box;}\n' +
+						'$.checkbox_indicator:hover{border-color:<<checkbox_settings.colors.border_hover>>;background-color:<<checkbox_settings.colors.bg_hover>>;}\n' +
 						'$.checkbox_svg{fill:<<checkbox_settings.colors.check>>;opacity:1;margin:0px;padding:0px;display:block;}\n' +
-						'$.checkbox:hover>$.checkbox_svg{fill:<<checkbox_settings.colors.check_hover>>;}\n' +
+						'$.checkbox_indicator:hover>$.checkbox_svg{fill:<<checkbox_settings.colors.check_hover>>;}\n' +
 						'$.checkbox_input{display:none;}\n' +
-						'$.checkbox_input:not(:checked)+$.checkbox_svg{opacity:0;}\n' +
+						'$.checkbox_input:not(:checked)+$.checkbox_indicator>$.checkbox_svg{opacity:0;}\n' +
 
-						'$.checkbox.tiny{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.tiny.border_radius>>px;border-width:<<checkbox_settings.sizes.tiny.border_width>>px;}\n' +
-						'$.checkbox.tiny>$.checkbox_svg{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;}\n' +
-						'$.checkbox.small{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.small.border_radius>>px;border-width:<<checkbox_settings.sizes.small.border_width>>px;}\n' +
-						'$.checkbox.small>$.checkbox_svg{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;}\n' +
-						'$.checkbox.normal{width:<<checkbox_settings.sizes.normal.box_size>>px;height:<<checkbox_settings.sizes.normal.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.normal.border_radius>>px;border-width:<<checkbox_settings.sizes.normal.border_width>>px;}\n' +
-						'$.checkbox.normal>$.checkbox_svg{width:100%;height:100%;}\n' +
+						'$.checkbox.tiny>$.checkbox_indicator{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.tiny.border_radius>>px;border-width:<<checkbox_settings.sizes.tiny.border_width>>px;}\n' +
+						'$.checkbox.tiny>$.checkbox_indicator>$.checkbox_svg{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;}\n' +
+						'$.checkbox.small>$.checkbox_indicator{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.small.border_radius>>px;border-width:<<checkbox_settings.sizes.small.border_width>>px;}\n' +
+						'$.checkbox.small>$.checkbox_indicator>$.checkbox_svg{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;}\n' +
+						'$.checkbox.normal>$.checkbox_indicator{width:<<checkbox_settings.sizes.normal.box_size>>px;height:<<checkbox_settings.sizes.normal.box_size>>px;<<css.border-radius>>:<<checkbox_settings.sizes.normal.border_radius>>px;border-width:<<checkbox_settings.sizes.normal.border_width>>px;}\n' +
+						'$.checkbox.normal>$.checkbox_indicator>$.checkbox_svg{width:100%;height:100%;}\n' +
 						//}
 
 						//{ Content padding
@@ -15419,11 +16440,19 @@ var xch = (function () {
 						//}
 
 						//{ Popups
-						"$.popup{position:fixed;z-index:170;<<css.box-sizing>>:border-box;color:<<popup.colors.text>>;<<!font:popup.font>>}\n" +
-						"$.popup_content{position:relative;margin:<<popup.bg.size>>px;}\n" +
-						"$.popup_title_bar{cursor:move;}\n" +
+						"$.popup{position:fixed;z-index:170;<<css.box-sizing>>:border-box;color:<<popup.colors.text>>;padding:<<popup.bg.size>>px;<<!font:popup.font>>}\n" +
+						"$.popup_content{position:relative;display:table;height:100%;width:100%;<<css.box-sizing>>:border-box;}\n" +
+						"$.popup_title_bar{cursor:move;height:0;}\n" +
 
 						"$.popup_title{text-shadow:<<!shadow:popup.title.shadow>>;<<!font:popup.title.font>>}\n" +
+
+						"$.popup_body{height:100%;}\n" +
+						"$.popup_body_inner_1{height:100%;<<css.box-sizing>>:border-box;}\n" +
+						"$.popup_body_inner_2{position:relative;height:100%;}\n" +
+						"$.popup_body_inner_3{position:relative;}\n" +
+						"$.popup_body_inner_3.fixed_height{position:absolute;left:0;top:0;bottom:0;right:0;overflow:auto;}\n" +
+						"$.popup_content_item{display:table-row;}\n" +
+						"$.popup_content_item_inner{<<css.box-sizing>>:border-box;}\n" +
 
 						"$.popup_close{cursor:pointer;position:absolute;right:0;top:0;color:<<popup.close.color>>;padding:0px <<popup.close.padding>>px 0px <<popup.close.padding>>px;}\n" +
 						"$.popup_close:hover{color:<<popup.close.color_hover>>;}\n" +
@@ -15439,7 +16468,10 @@ var xch = (function () {
 						"$.popup_input:focus," +
 						"$.popup_button:active{background-color:<<popup.input.colors.bg_selected>>;border-color:<<popup.input.border.color_selected>>;}\n" +
 
-						"$.popup_buttons{text-align:right;}\n" +
+						"$.popup_content:not(.packed)>$.popup_content_item+$.popup_content_item>$.popup_content_item_inner{padding-top:<<popup.separation>>px;}\n" +
+						"$.popup_description+$.popup_input{margin-top:<<popup.separation>>px;}\n" +
+
+						"$.popup_buttons{text-align:right;height:0;}\n" +
 
 						"$.popup_input{color:<<popup.input.colors.text>>;<<!font:popup.input.font>>}\n" +
 						"$.popup_input::-webkit-input-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
@@ -15449,8 +16481,6 @@ var xch = (function () {
 
 						"$.popup_button{cursor:pointer;display:inline-block;<<css.box-sizing>>:border-box;<<!font:popup.input.font>>}\n" +
 						"$.popup_button+$.popup_button{margin-left:<<popup.buttons.spacing>>px;}\n" +
-
-						"$.popup_content:not(.packed)>$.popup_content_item+$.popup_content_item{margin-top:<<popup.separation>>px;}\n" +
 
 						"$.popup_background{position:absolute;left:0;top:0;bottom:0;right:0;background:<<popup.bg.color>>;<<css.border-radius>>:<<popup.bg.radius>>px;box-shadow:<<!shadow:popup.bg.shadow>>;opacity:<<popup.bg.opacity>>;}\n" +
 						"$.popup_resizers{position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
@@ -15474,7 +16504,7 @@ var xch = (function () {
 						"$.quick_reply{position:fixed;display:inline-block;z-index:115;}\n" +
 						"$.quick_reply.closed{display:none;}\n" +
 
-						"$.quick_reply>$.popup_content{margin:<<popup.bg.size>>px;position:relative;z-index:5;}\n" +
+						"$.quick_reply>$.popup_content{position:relative;z-index:5;}\n" +
 						"$.qr_row{display:block;line-height:0px;white-space:nowrap;position:relative;}\n" +
 						"$.qr_cell{vertical-align:middle;display:inline-block;<<css.box-sizing>>:border-box;position:relative;line-height:normal;white-space:normal;}\n" +
 
@@ -15604,6 +16634,74 @@ var xch = (function () {
 						"$.qr_cooldown{position:absolute;left:0;top:0;bottom:0;right:0;opacity:<<qr.cooldown.opacity>>;<<css.transition>>:opacity 0s;background-color:<<qr.cooldown.colors.bg>>;}\n" +
 						"$.qr_cooldown.ready{opacity:0;<<css.transition>>:opacity <<qr.cooldown.transition.time>>s <<qr.cooldown.transition.method>> <<qr.cooldown.transition.delay>>s;}\n" +
 						"$.qr_cooldown_inner{position:absolute;left:0;top:0;bottom:0;width:0%;background-color:<<qr.cooldown.colors.bar>>;}\n" +
+						//}
+
+						//{ Settings
+						"$.settings{position:absolute;left:0;top:0;bottom:0;right:0;<<!font:settings.font>>}\n" +
+						"$.settings_container{display:table;width:100%;height:100%;}\n" +
+
+						"$.settings_tabs{display:table-row;height:0;width:100%;white-space:nowrap;overflow-x:auto;overflow-y:hidden;}\n" +
+						"$.settings_tabs_inner_1{display:table;width:100%;}\n" +
+						"$.settings_tabs_end_spacing{vertical-align:top;line-height:0;width:0;display:table-cell;<<css.box-sizing>>:border-box;border-bottom:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.style>> <<settings.tabs.border_outer.color>>;}\n" +
+						"$.settings_tabs_end_spacing:last-child{width:100%;}\n" +
+						"$.settings_tabs_end_spacing:before{content:\"\";width:4px;display:inline-block;}\n" +
+						"$.settings_tabs_inner_2{display:table-cell;width:0;<<css.box-sizing>>:border-box;}\n" +
+
+						"$.settings_tab{display:inline-block;<<css.box-sizing>>:border-box;}\n" +
+						"$.settings_tab_inner_1{cursor:pointer;position:relative;vertical-align:bottom;display:inline-block;white-space:normal;}\n" +
+						"$.settings_tab_inner_2{border-width:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.size>>px 0px <<settings.tabs.border_outer.size>>px;border-color:<<settings.tabs.border_outer.color>>;border-style:<<settings.tabs.border_outer.style>>;padding:4px 8px 4px 8px;<<css.border-top-left-radius>>:<<settings.tabs.border_outer.radius>>px;<<css.border-top-right-radius>>:<<settings.tabs.border_outer.radius>>px;overflow:hidden;text-shadow:<<!shadow:settings.tabs.title.shadow>>;<<!font:settings.tabs.title.font>>}\n" +
+						"$.settings_tab:not(.current)>$.settings_tab_inner_1>$.settings_tab_inner_2{border-color:<<settings.tabs.border_outer.color_inactive>>;}\n" +
+						"$.settings_tab.current>$.settings_tab_inner_1>$.settings_tab_inner_2{text-shadow:<<!shadow:settings.tabs.title.current.shadow>>;<<!gradient:settings.tabs.bg>>}\n" +
+						"$.settings_tab+$.settings_tab:before{content:\"\";width:4px;display:inline-block;vertical-align:bottom;border-bottom:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.style>> <<settings.tabs.border_outer.color>>;}\n" +
+						"$.settings_tab:not(.current)>$.settings_tab_inner_1>$.settings_tab_inner_2{padding-bottom:2px;}\n" +
+						"$.settings_tab:not(.current)>$.settings_tab_inner_1:after{content:\"\";position:absolute;left:0;right:0;bottom:0;border-bottom:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.style>> <<settings.tabs.border_outer.color>>;}\n" +
+
+						"$.settings_sections{display:table-row;height:100%;}\n" +
+						"$.settings_sections_inner_1{position:relative;height:100%;<<css.box-sizing>>:border-box;padding-top:4px;}\n" +
+						"$.settings_sections_inner_2{position:relative;height:100%;}\n" +
+						"$.settings_sections_inner_3{position:absolute;left:0;top:0;bottom:0;right:0;overflow:auto;}\n" +
+
+						"$.settings_content{display:block;}\n" +
+						"$.settings_content.hidden{display:none;}\n" +
+
+						"$.settings_section{display:block;}\n" +
+						"$.settings_section.hidden{display:none;}\n" +
+
+						"$.settings_section+$.settings_section:before{content:\"\";margin:<<settings.section.separator.padding.top>>px <<settings.section.separator.padding.right>>px <<settings.section.separator.padding.bottom>>px <<settings.section.separator.padding.left>>px;border-width:<<settings.section.separator.size>>px 0px <<settings.section.separator.size>>px 0px;border-color:<<settings.section.separator.colors.top>>;border-bottom-color:<<settings.section.separator.colors.bottom>>;border-style:<<settings.section.separator.style>>;display:block;}\n" +
+						"$.settings_section_title{<<!font:settings.section.label.font>>}\n" +
+						"$.settings_section_content{margin:<<settings.section.padding.top>>px <<settings.section.padding.right>>px <<settings.section.padding.bottom>>px <<settings.section.padding.left>>px;}\n" +
+
+						"$.settings_section_item_label{<<!font:settings.section.item.label.font>>}\n" +
+
+						"$.settings_section_item{position:relative;padding:<<settings.section.item.padding>>px;}\n" +
+						"$.settings_section_item:nth-child(2n+1){background:<<settings.section.item.colors.bg_odd>>;}\n" +
+						"$.settings_section_item:hover{z-index:1;background:<<settings.section.item.colors.bg_hover>>;box-shadow:<<!shadow:settings.section.item.hover_shadow>>;}\n" +
+						"$.settings_section_item:after{content:\"\";display:block;clear:both;}\n" +
+
+						"$.settings_value_container{color:<<settings.inputs.text_color.normal>>;}\n" +
+						"$.settings_section_item.active>$.settings_value_container," +
+						"$.settings_section_item:hover>$.settings_value_container{color:<<settings.inputs.text_color.hover>>;}\n" +
+						"$.settings_value_container:not(.full){float:right;}\n" +
+						"$.settings_value_container.full{margin-top:<<settings.section.item.padding>>px;}\n" +
+						"$.settings_value_item{display:block;text-align:right;}\n" +
+
+						"$.settings_value_input{width:<<settings.inputs.textbox.width>>px;}\n" +
+
+						"$.settings_value_checkbox_container{direction:rtl;}\n" +
+						"$.settings_value_checkbox_display{vertical-align:middle;}\n" +
+						"$.settings_value_checkbox_container>$.checkbox_input+$.checkbox_indicator+$.settings_value_checkbox_display:after{content:attr(value_off);margin-right:8px;direction:ltr;}\n" +
+						"$.settings_value_checkbox_container>$.checkbox_input:checked+$.checkbox_indicator+$.settings_value_checkbox_display:after{content:attr(value_on);}\n" +
+
+						"$.settings_value_slider{text-align:right;}\n" +
+						"$.settings_value_slider_inner_1{position:relative;width:<<settings.inputs.slider.width>>px;height:<<settings.inputs.slider.height>>px;overflow:hidden;}\n" +
+						"$.settings_value_slider_inner_1:before{content:\"\";vertical-align:middle;display:inline-block;width:0;height:100%;}\n" +
+						"$.settings_value_slider_inner_1:after{content:\"\";vertical-align:middle;display:inline-block;width:100%;border-width:<<settings.inputs.slider.line_size>>px 0px <<settings.inputs.slider.line_size>>px 0px;border-style:solid;border-color:<<settings.inputs.slider.colors.line.top>>;border-bottom-color:<<settings.inputs.slider.colors.line.bottom>>;}\n" +
+						"$.settings_value_slider_inner_2{position:absolute;top:0;bottom:0;left:<<settings.inputs.slider.grabber_size>>px;right:<<settings.inputs.slider.grabber_size>>px;}\n" +
+						"$.settings_value_slider_grabber{position:absolute;left:0;top:50%;height:100%;cursor:pointer;}\n" +
+						"$.settings_value_slider_grabber:after{content:\"\";position:absolute;left:-<<settings.inputs.slider.grabber_size>>px;width:<<!double:settings.inputs.slider.grabber_size>>px;top:-50%;height:100%;background:<<settings.inputs.slider.colors.grabber.bg>>;<<css.box-sizing>>:border-box;border:<<settings.inputs.slider.border.size>>px <<settings.inputs.slider.border.style>> <<settings.inputs.slider.border.color>>;<<css.border-radius>>:<<settings.inputs.slider.border.radius>>px;}\n" +
+						"$.settings_value_slider_value_display{}\n" +
+						"$.settings_value_slider_value_display[display_value]:after{content:attr(display_value);}\n" +
+						"$.settings_value_slider_value_display[display_value][display_units]:after{content:attr(display_value) \" \" attr(display_units);}\n" +
 						//}
 
 						//{ Messenger
@@ -15882,7 +16980,15 @@ var xch = (function () {
 							/*!debug!*/assert(val !== undefined, match);
 							// Process variable
 							if (fmt !== null) {
-								if (fmt == "font") {
+								if (fmt == "half") {
+									/*!debug!*/assert(typeof(val) == typeof(0), match);
+									val /= 2;
+								}
+								else if (fmt == "double") {
+									/*!debug!*/assert(typeof(val) == typeof(0), match);
+									val *= 2;
+								}
+								else if (fmt == "font") {
 									p = "";
 									if ("face" in val) p += "font-family:" + val.face + ";";
 									if ("size" in val) p += "font-size:" + val.size + ";";
@@ -16132,11 +17238,13 @@ var xch = (function () {
 					return $(
 						'<label class="' + this.cls + ' ' + size + ' checkbox">' +
 						'<input class="' + this.cls + ' checkbox_input" type="checkbox"' + (checked ? ' checked="checked"' : '') + ' />' +
+						'<span class="' + this.cls + ' checkbox_indicator">' +
 						'<svg class="' + this.cls + ' checkbox_svg" xmlns="http://www.w3.org/2000/svg" version="1.1">' +
 						'<g transform="scale(' + sz + ',' + sz + ')">' +
 						'<polygon points="0.75,0.0625 0.9375,0.1875 0.5,0.9375 0.3125,0.9375 0.0625,0.6875 0.1875,0.5 0.375,0.6875"></polygon>' +
 						'</g>' +
 						'</svg>' +
+						'</span>' +
 						'</label>'
 					);
 				},
