@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description Extension for 38chan
-// @version     0.3
+// @version     0.3.0.1
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -44,9 +44,8 @@ var xch = (function () {
 
 			prefix: "xch",
 			name: "xch",
-			version: "inline",
+			version: "inline", /*!auto-version:"inline"!*/
 			homepage: "http://dnsev.github.com/xch/",
-			inline: true,
 			site: "38chan",
 			update_homepage: "http://dnsev.github.com/xch/#!install/update",
 			update_url: "",
@@ -78,14 +77,12 @@ var xch = (function () {
 					// Greasemonkey
 					xch.script.name = GM_info.script.name.toString();
 					xch.script.version = GM_info.script.version.toString();
-					xch.script.inline = false;
 				}
 				catch (e) {
 					try {
 						// Tampermonkey
 						xch.script.name = GM_getMetadata("name").toString();
 						xch.script.version = GM_getMetadata("version").toString();
-						xch.script.inline = false;
 					}
 					catch (e) {
 						// Not applicable
@@ -2005,6 +2002,8 @@ var xch = (function () {
 					return changelog;
 				},
 				check_changelog_for_updates: function (changelog, update_data) {
+					if (update_data.version == "inline") update_data.version = update_data.version_old || update_data.version;
+
 					var version_current = update_data.version;
 					var changes = this.get_changelog_updates(changelog, version_current);
 

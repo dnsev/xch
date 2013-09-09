@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description Extension for 38chan
-// @version     0.3
+// @version     0.3.0.1
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
