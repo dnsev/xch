@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
-// @description E𝔁tension for 38𝒄𝒉an
-// @version     0.2.2.4
+// @description Extension for 38chan
+// @version     0.3
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -893,6 +893,22 @@ var xch = (function () {
 			return (Math.round(n * d) / d) + labels[i];
 		},
 
+		format_decimal: function (n, max_decimals, min_decimals) {
+			var d = Math.pow(10, max_decimals);
+			n = n.toFixed(Math.round(max_decimals * d) / d);
+
+			var len = n.length, removed = false;
+			min_decimals = min_decimals || 0;
+			while (n[--len] == "0" && max_decimals > min_decimals) {
+				n = n.substr(0, n.length - 1);
+				--max_decimals;
+				removed = true;
+			}
+			if (max_decimals == 0 && removed) n = n.substr(0, n.length - 1);
+
+			return n;
+		},
+
 		dom_to_string: function (object, filter_function) {
 			var str = "";
 
@@ -1167,6 +1183,27 @@ var xch = (function () {
 					}
 				}
 			}
+		},
+
+		regex_array: function (str) {
+			var ai = 1;
+			var matches = [];
+
+			while (true) {
+				var match = arguments[ai].exec(str);
+				if (!match) break;
+				if (ai + 1 < arguments.length) ++ai;
+				for (var i = 1; i < match.length; ++i) {
+					if (match[i] != null) {
+						matches.push(match[i]);
+						break;
+					}
+				}
+
+				str = str.substr(match.index + match[0].length);
+			}
+
+			return matches;
 		},
 
 		JSON: (function () {
@@ -2044,20 +2081,127 @@ var xch = (function () {
 
 				this_private.setup.call(this);
 
-				// Values
-				this.popup = null;
+				// Load
+				this_private.load_all.call(this);
 
-				this.events = {
-					close: {
-						triggering: false,
-						callbacks: [],
-						removals: null
-					}
+				// Values
+				this.data = {
+					popup: null,
+
+					events: {
+						close: {
+							triggering: false,
+							callbacks: [],
+							removals: null
+						}
+					},
+
+					tabs: [],
+					tab_current: 0,
+					container: null,
+					mode_changer: null,
+					mode_menu: null,
+					mode: Settings.modes.NORMAL_AND_BELOW,
+
+					target_objects: null
 				};
 
-				this.tabs = [];
-				this.tab_current = 0;
+				// Events
+				communication.cross_tab_on("settings_save", this_private.on_cross_tab_save, this);
 
+			};
+
+			var apply_changes = {
+
+				to_footer_backlinks: function () {
+					for (var i = 0, j; i < content.threads.length; ++i) {
+						for (j = 0; j < content.threads[i].posts.length; ++j) {
+							content.threads[i].posts[j].update_html_backlink_location(settings.post.footer_backlinks);
+						}
+					}
+				}
+
+			};
+
+			var save = {
+				image_preview: function () {
+					xch.site_set_value("settings_image_preview", this.image_preview);
+
+					communication.cross_tab_trigger("settings_save", {
+						value: "image_preview"
+					});
+				},
+				sourcing: function () {
+					xch.site_set_value("settings_sourcing", this.sourcing);
+
+					communication.cross_tab_trigger("settings_save", {
+						value: "sourcing"
+					});
+				},
+				post: function () {
+					xch.site_set_value("settings_post", this.post);
+
+					communication.cross_tab_trigger("settings_save", {
+						value: "post"
+					});
+				},
+				popup: function () {
+					xch.site_set_value("settings_popup", this.popup);
+
+					communication.cross_tab_trigger("settings_save", {
+						value: "popup"
+					});
+				}
+			};
+			var load = {
+				image_preview: function (apply) {
+					var set = xch.site_get_value("settings_image_preview", this.image_preview);
+					if (set !== this.image_preview) {
+						// Merge
+						xch.merge_settings(set, this.image_preview, false);
+
+						if (apply) {
+							// ...
+						}
+					}
+				},
+				sourcing: function (apply) {
+					var set = xch.site_get_value("settings_sourcing", this.sourcing);
+					if (set !== this.sourcing) {
+						// Merge
+						xch.merge_settings(set, this.sourcing, false);
+
+						if (apply) {
+							// ...
+						}
+					}
+				},
+				post: function (apply) {
+					var set = xch.site_get_value("settings_post", this.post);
+					if (set === this.post) {
+						// Defaults
+						this.post.time.offset = -(new Date()).getTimezoneOffset() * 60 * 1000;
+					}
+					else {
+						// Merge
+						xch.merge_settings(set, this.post, false);
+
+						if (apply) {
+							// ...
+						}
+					}
+				},
+				popup: function (apply) {
+					var set = xch.site_get_value("settings_popup", this.popup);
+					if (set !== this.popup) {
+						// Merge
+						xch.merge_settings(set, this.popup, false);
+
+						if (apply) {
+							// ...
+						}
+					}
+				}
 			};
 
 			var this_private = {
@@ -2070,6 +2214,7 @@ var xch = (function () {
 							".jpg": true,
 							".png": true,
 							".gif": true,
+							".bmp": true,
 							spoiler: true
 						},
 						open_timeout: 0.0,
@@ -2082,9 +2227,9 @@ var xch = (function () {
 						upscale: false,
 						click: {
 							if_closed: "toggle", // toggle,tab,embed,nothing
-							if_open: "embed"
-						},
-						close_on_click: true
+							if_open: "embed",
+							if_preview: "toggle"
+						}
 					};
 					this.sourcing = {
 						source_text: "https://www.google.com/searchbyimage?image_url=%thumbnail;text:google;if_spoiler:false\n> https://www.google.com/searchbyimage?image_url=%thumbnail;text:Thumbnail\n> https://www.google.com/searchbyimage?image_url=%image;text:Full image\nhttps://www.google.com/searchbyimage?image_url=%image;text:google;if_not_spoiler:false\nhttp://regex.info/exif.cgi?imgurl=%image;text:exif"
@@ -2137,34 +2282,172 @@ var xch = (function () {
 							allow_cyclic: false
 						}
 					};
+					this.popup = {
+						resize_display_time: 0.25,
+						anchor_border_size: 10
+					};
 
 				},
 
-				on_close: function (event, self) {
-					self.popup = null;
-					this_private.trigger.call(self, "close", {});
-					self.tabs = [];
-				},
-				on_button_click: function (event) {
-					if (event.which != 1) return true;
+				get_target_objects: function () {
+					var s_t = {
+						settings: {
+							object: this,
+							save_function: Settings.prototype.get_change_apply_functions
+						},
+						updater: {
+							object: content.updater,
+							save_function: xch.Updater.prototype.get_change_apply_functions
+						}
+					};
 
-					switch (event.data.callback_data.button_id) {
-						case 0: // Close
-						{
-							event.data.popup.close();
+					return s_t;
+				},
+				split_target: function (target_string) {
+					return xch.regex_array(target_string, /^([a-zA-Z_]\w*)/, /^(?:\.([a-zA-Z_]\w*)|\[([^\]]*)\])/);
+				},
+				get_target_data: function (t_array, target_objects) {
+					for (var key in target_objects) {
+						var k_array = this_private.split_target.call(this, key), i;
+						if (k_array.length < t_array.length) {
+							for (i = 0; i < k_array.length; ++i) {
+								if (t_array[i] != k_array[i]) break;
+							}
+							if (i == k_array.length) {
+								return {
+									target_data: target_objects[key],
+									offset: i
+								};
+							}
 						}
-						break;
-						case 1: // Save
-						{
-							// TODO
-						}
-						break;
 					}
+
+					return {
+						target_data: null,
+						offset: 0
+					};
+				},
+				get_value: function (target_string, target_objects) {
+					var t_array = this_private.split_target.call(this, target_string);
+
+					var t_data = this_private.get_target_data.call(this, t_array, target_objects);
+					if (t_data.target_data != null) {
+						// Found
+						var i = t_data.offset;
+						t_data = t_data.target_data;
+
+						// Get
+						var val = t_data.object;
+						for (; i < t_array.length; ++i) {
+							val = val[t_array[i]];
+						}
+						return val;
+					}
+
+					return undefined;
+				},
+				set_value: function (target_string, value, target_objects) {
+					var t_array = this_private.split_target.call(this, target_string);
+
+					var t_data = this_private.get_target_data.call(this, t_array, target_objects);
+					if (t_data.target_data != null) {
+						// Found
+						var i = t_data.offset;
+						t_data = t_data.target_data;
+
+						// Get
+						var val = t_data.object;
+						for (; i < t_array.length - 1; ++i) {
+							val = val[t_array[i]];
+						}
+						val[t_array[i]] = value;
+					}
+				},
+
+				singular: function (str) {
+					return str.substr(0, str.length - 1);
+				},
+
+				param_value_to_string: function (params, string_rep) {
+					var value = params.current_value;
+
+					if ("adjust_pre" in params.value) {
+						value = params.value.adjust_pre.call(this, value);
+					}
+					if (string_rep) {
+						if ("custom" in params.value && value.toString() in params.value.custom) {
+							value = params.value.custom[value.toString()];
+						}
+						else if ("units" in params.value) {
+							value += " " + (value == 1 ? this_private.singular.call(this, params.value.units) : params.value.units);
+						}
+					}
+
+					return value;
+				},
+				param_value_from_string: function (params, value) {
+					// Units removal
+					if ("units" in params.value) {
+						var units = params.value.units;
+						var single = this_private.singular.call(this, units);
+						units = units.replace(/[^\w\s]/g, "\\$&");
+						single = single.replace(/[^\w\s]/g, "\\$&");
+
+						var re = new RegExp("\s*" + units + "\s*$|\s*" + single + "\s*$", "i");
+
+						// Remove units
+						value = value.replace(re, "");
+					}
+
+					// Type convert
+					var is_int;
+					if (params.value.type == "boolean") {
+						value = xch.string_to_truth(value.trim());
+					}
+					else if ((is_int = (params.value.type == "integer")) || params.value.type == "number") {
+						value = value.trim();
+
+						// Custom
+						if ("custom" in params.value) {
+							value = value.toLowerCase();
+							for (var c in params.value.custom) {
+								if (params.value.custom[c].toLowerCase() == value) {
+									value = c;
+									break;
+								}
+							}
+						}
+
+						// Value
+						value = parseFloat(value);
+						if (isFinite(value)) {
+							if (is_int) value = Math.round(value);
+						}
+						else {
+							value = 0;
+						}
+
+						// Bounding
+						if ("min" in params.value) {
+							if (value < params.value.min) value = params.value.min;
+						}
+						if ("max" in params.value) {
+							if (value > params.value.max) value = params.value.max;
+						}
+					}
+
+					// Post modify
+					if ("adjust_post" in params.value) {
+						value = params.value.adjust_post.call(this, value);
+					}
+
+					// Done
+					return value;
 				},
 
 				trigger: function (event, data) {
 					// Trigger an event
-					var e = this.events[event];
+					var e = this.data.events[event];
 					e.triggering = true;
 					for (var i = 0, j = e.callbacks.length; i < j; ++i) {
 						e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
@@ -2196,8 +2479,14 @@ var xch = (function () {
 						e.append(
 							(d = style.e("div", "settings_section_item_description"))
 						);
-						if (typeof(d) == typeof("")) {
+						if (typeof(params.description) == typeof("")) {
 							d.text(params.description);
+						}
+						else if (params.description instanceof Array) {
+							for (var i = 0; i < params.description.length; ++i) {
+								if (i > 0) d.append(style.e("br"));
+								d.append(style.t(params.description[i]));
+							}
 						}
 						else {
 							d.html(params.description);
@@ -2211,8 +2500,11 @@ var xch = (function () {
 					var v_after = false;
 					var v = null;
 					var val = params.value;
-					if (val.type == "boolean") {
-						if (val.select == "checkbox") {
+					var value;
+					var event_data = { self: this, params: params };
+
+					if (val.select == "checkbox") {
+						if (val.type == "boolean") {
 							(v = style.checkbox(false, "normal"))
 							.addClass("settings_value_checkbox_container")
 							.append(
@@ -2220,41 +2512,150 @@ var xch = (function () {
 								.attr("value_on", val.on || "Enabled")
 								.attr("value_off", val.off || "Disabled")
 							);
-							v.find("input").on("change", { self: this, params: params }, this_private.on_input_checkbox_change);
+
+							// Value
+							value = this_private.param_value_to_string.call(this, params, false);
+							var input = v.find("input");
+							input.prop("checked", (val.invert ? !value : value));
+
+							// Event
+							input.on("change", event_data, this_private.on_input_checkbox_change);
 						}
 					}
-					else if (val.type == "integer" || val.type == "number") {
-						if (val.select == "textbox") {
-							(v = style.e("input", "popup_input settings_value_input"))
-							.attr("type", "text");
-							v.on("change", { self: this, params: params }, this_private.on_input_textbox_change);
-							v.on("focus", { self: this, params: params }, this_private.on_input_textbox_focus);
-							v.on("blur", { self: this, params: params }, this_private.on_input_textbox_blur);
+					else if (val.select == "radio") {
+						if (val.type == "boolean") {
+							var r1, r2, d;
+
+							(v = style.e("div", "settings_value_radio_select_container"))
+							.append(
+								style.e("div", "settings_value_radio_select_item")
+								.append(
+									(r1 = style.radiobox(false, "normal"))
+									.addClass("settings_value_radiobox_container")
+									.append(
+										style.e("span", "settings_value_radiobox_display")
+										.attr("value_display", val.on || "Enabled")
+									)
+								)
+							);
+							(d = style.e("div", "settings_value_radio_select_item"))
+							.append(
+								(r2 = style.radiobox(false, "normal"))
+								.addClass("settings_value_radiobox_container")
+								.append(
+									style.e("span", "settings_value_radiobox_display")
+									.attr("value_display", val.off || "Disabled")
+								)
+							);
+							if ("reverse" in val && val.reverse) v.prepend(d);
+							else v.append(d);
+
+							if (!("single_line" in val) || val.single_line) v.addClass("single_line");
+
+							// Set value
+							value = this_private.param_value_to_string.call(this, params, false);
+							(value ? r1 : r2).find("input").prop("checked", true);
+
+							// Events
+							event_data.inputs = [{
+								input: r1.find("input"),
+								value: true
+							}, {
+								input: r2.find("input"),
+								value: false
+							}];
+
+							r1.find("input").add(r2.find("input"))
+							.on("change", event_data, this_private.on_input_radiobox_change);
 						}
-						else if (val.select == "slider") {
+					}
+					else if (val.select == "slider") {
+						if (val.type == "integer" || val.type == "number") {
+							var val_display, grabber, slider;
 							(v = style.e("div", "settings_value_slider"))
 							.append(
-								style.e("div", "settings_value_slider_inner_1")
+								(slider = style.e("div", "settings_value_slider_inner_1"))
 								.append(
 									style.e("div", "settings_value_slider_inner_2")
 									.append(
-										style.e("div", "settings_value_slider_grabber")
+										(grabber = style.e("div", "settings_value_slider_grabber"))
 									)
 								)
 							)
 							.append(
-								style.e("div", "settings_value_slider_value_display")
-								.attr("display_value", "0.325")
-								.attr("display_units", "seconds")
+								(val_display = style.e("div", "settings_value_slider_value_display"))
 							);
 
-							v.children(".settings_value_slider_inner_1")
-							.on("mousedown", { self: this, params: params }, this_private.on_input_slider_mousedown)
-							.on("mouseup", { self: this, params: params }, this_private.on_input_slider_mouseup);
+							event_data.value_display = val_display;
+							event_data.grabber = grabber;
 
-							v.find(".settings_value_slider_grabber")
-							.on("mousedown", { self: this, params: params }, this_private.on_input_slider_grabber_mousedown)
-							.on("mouseup", { self: this, params: params }, this_private.on_input_slider_grabber_mouseup);
+							// Events
+							slider
+							.on("mousedown", event_data, this_private.on_input_slider_mousedown);
+
+							grabber
+							.on("mousedown", event_data, this_private.on_input_slider_grabber_mousedown);
+
+							// Value
+							value = this_private.param_value_to_string.call(this, params, false);
+
+							var d_max = ("decimals" in val ? val.decimals : 3);
+							var d_min = ("decimals_min" in val ? val.decimals_min : 0);
+							val_display.attr("display_value", xch.format_decimal(value, d_max, d_min));
+
+							if ("units" in val) {
+								val_display.attr("display_units", value == 1 ? this_private.singular.call(this, val.units) : val.units);
+							}
+
+							grabber.css("left", ((value - val.min) / (val.max - val.min) * 100).toFixed(2) + "%");
+						}
+					}
+					else if (val.select == "textbox") {
+						if (val.type == "integer" || val.type == "number" || val.type == "string") {
+							(v = style.e("input", "popup_input settings_value_input"))
+							.attr("type", "text");
+
+							v.on("focus", event_data, this_private.on_input_textbox_focus);
+							v.on("blur", event_data, this_private.on_input_textbox_blur);
+
+							// Value
+							value = this_private.param_value_to_string.call(this, params, true);
+							v.val(value);
+						}
+					}
+					else if (val.select == "textarea") {
+						if (val.type == "integer" || val.type == "number" || val.type == "string") {
+							v_after = true;
+							(v = style.e("textarea", "popup_input settings_value_textarea_input"));
+							if ("height" in val) {
+								v.css("height", (val.height).toFixed(2) + "px");
+							}
+
+							v.on("focus", event_data, this_private.on_input_textbox_focus);
+							v.on("blur", event_data, this_private.on_input_textbox_blur);
+
+							// Value
+							value = this_private.param_value_to_string.call(this, params, true);
+							v.val(value);
+						}
+					}
+					else if (val.select == "menu") {
+						if (val.type == "enum") {
+							(v = style.e("div", "settings_value_text_display"));
+							v.on("click", event_data, this_private.on_input_menu_click);
+
+							// Value
+							value = this_private.param_value_to_string.call(this, params, false);
+							var i;
+							for (i = 0; i < val.options.length; ++i) {
+								if (val.options[i].value == value) {
+									v.attr("display_value", val.options[i].label);
+									break;
+								}
+							}
+							if (i == val.options.length) {
+								v.attr("display_value", value);
+							}
 						}
 					}
 
@@ -2281,11 +2682,13 @@ var xch = (function () {
 							}
 						}
 						// Update pre
+						params.container = e;
 						data.pre = e;
 					}
 					else {
 						if (v != null) {
 							// Add to previous
+							data.pre.addClass("multiple");
 							if (v_after) {
 								var c = (data.pre.find(".settings_value_container.full"));
 								if (c.length == 0) {
@@ -2305,42 +2708,639 @@ var xch = (function () {
 								c.append(v);
 							}
 						}
+						params.parent_container = data.pre;
 					}
 
 					// Done
 					return e;
 				},
 
+				set_mode: function (mode) {
+					// Change text
+					this.data.mode = mode;
+					this_private.set_mode_text.call(this);
+
+					// Change display
+					var tab_first = true, tab_count = 0, section_first, section_count, option_first, option_count, reselect_tab = false;
+					for (var i = 0, j, k, sec, item; i < this.data.tabs.length; ++i) {
+						// Content
+						section_first = true;
+						section_count = 0;
+						for (j = 0; j < this.data.tabs[i].sections.length; ++j) {
+							sec = this.data.tabs[i].sections[j];
+
+							option_first = true;
+							option_count = 0;
+							for (k = 0; k < sec.contents.length; ++k) {
+								// Item
+								item = sec.contents[k].container;
+								if (item != null) {
+									// Item
+									if ((sec.contents[k].mode & this.data.mode) != 0) {
+										if (option_first) {
+											item.addClass("first");
+											option_first = false;
+										}
+										else {
+											item.removeClass("first");
+										}
+										if ((++option_count % 2) == 1) {
+											item.addClass("odd");
+										}
+										else {
+											item.removeClass("odd");
+										}
+										item.removeClass("hidden");
+									}
+									else {
+										item.addClass("hidden").removeClass("first odd");
+									}
+								}
+							}
+
+							// Section
+							if (option_count > 0) {
+								if (section_first) {
+									sec.container.addClass("first");
+									section_first = false;
+								}
+								else {
+									sec.container.removeClass("first");
+								}
+								if ((++section_count % 2) == 1) {
+									sec.container.addClass("odd");
+								}
+								else {
+									sec.container.removeClass("odd");
+								}
+								sec.container.removeClass("hidden");
+							}
+							else {
+								sec.container.addClass("hidden").removeClass("first odd");
+							}
+						}
+
+						// Tab
+						if (section_count > 0) {
+							if (tab_first) {
+								this.data.tabs[i].container.addClass("first");
+								tab_first = false;
+							}
+							else {
+								this.data.tabs[i].container.removeClass("first");
+							}
+							if ((++tab_count % 2) == 1) {
+								this.data.tabs[i].container.addClass("odd");
+							}
+							else {
+								this.data.tabs[i].container.removeClass("odd");
+							}
+							this.data.tabs[i].container.removeClass("hidden");
+						}
+						else {
+							this.data.tabs[i].container.addClass("hidden").removeClass("first odd");
+							if (this.data.tab_current == i) {
+								reselect_tab = true;
+							}
+						}
+					}
+
+					// Tab change
+					if (reselect_tab) {
+						this.data.tabs[this.data.tab_current].container.removeClass("current");
+						this.data.tabs[this.data.tab_current].content.addClass("hidden");
+						for (this.data.tab_current = 0; this.data.tab_current < this.data.tabs.length; ++this.data.tab_current) {
+							if (!this.data.tabs[this.data.tab_current].container.hasClass("hidden")) {
+								this.data.tabs[this.data.tab_current].container.addClass("current");
+								break;
+							}
+						}
+					}
+				},
+				set_mode_text: function () {
+					var text = "Basic";
+					if (this.data.mode == Settings.modes.ADVANCED_AND_BELOW) text = "Advanced";
+					else if (this.data.mode == Settings.modes.TECHNICAL_AND_BELOW) text = "Technical";
+					else if (this.data.mode == Settings.modes.DEBUG_AND_BELOW) text = "Debug";
+					this.data.mode_changer.attr("value_display", text);
+				},
+
+				apply_change_status: function () {
+					// Undisable button
+					this.data.popup.container.find(".popup_button").first().removeClass("text_only");
+				},
+				save_changes: function () {
+					// Get changes
+					var changes = [];
+
+					for (var i = 0, j, k, c; i < this.data.tabs.length; ++i) {
+						for (j = 0; j < this.data.tabs[i].sections.length; ++j) {
+							c = this.data.tabs[i].sections[j].contents;
+							for (k = 0; k < c.length; ++k) {
+								if (c[k].current_value != c[k].last_value) {
+									// Add change
+									changes.push(c[k]);
+								}
+							}
+						}
+					}
+
+					// Set values
+					var save_queue = [];
+					for (var i = 0, j, t_data, t_array, ch_obj; i < changes.length; ++i) {
+						// Set
+						this_private.set_value.call(this, changes[i].target, changes[i].current_value, this.data.target_objects);
+
+						// Append to save queue
+						t_array = this_private.split_target.call(this, changes[i].target);
+						t_data = this_private.get_target_data.call(this, t_array, this.data.target_objects);
+						if (t_data != null) {
+							// Change object
+							ch_obj = {
+								t_array: t_array.slice(t_data.offset),
+								previous: changes[i].last_value
+							};
+
+							// Find what object/function to use
+							for (j = 0; j < save_queue.length; ++j) {
+								if (save_queue[j].object === t_data.target_data.object && save_queue[j].save_function === t_data.target_data.save_function) {
+									save_queue[j].changes.push(ch_obj);
+									break;
+								}
+							}
+							if (j == save_queue.length) {
+								save_queue.push({
+									object: t_data.target_data.object,
+									save_function: t_data.target_data.save_function,
+									changes: [ ch_obj ]
+								});
+							}
+						}
+
+						// Clear change
+						changes[i].last_value = changes[i].current_value;
+						changes[i].container.removeClass("changed");
+					}
+
+					// Call save settings
+					for (var i = 0, j, ret, fcns; i < save_queue.length; ++i) {
+						ret = save_queue[i].save_function.call(save_queue[i].object, save_queue[i].changes);
+						// Saving/applying functions
+						if (ret instanceof Object) {
+							if ("save" in ret) {
+								fcns = this.match_functions(ret.save, save_queue[i].changes, true);
+								for (j = 0; j < fcns.length; ++j) {
+									fcns[j].call(save_queue[i].object, save_queue[i].changes);
+								}
+							}
+							if ("apply" in ret) {
+								fcns = this.match_functions(ret.apply, save_queue[i].changes, true);
+								for (j = 0; j < fcns.length; ++j) {
+									fcns[j].call(save_queue[i].object, save_queue[i].changes);
+								}
+							}
+						}
+					}
+
+					// Disable save
+					this.data.popup.container.find(".popup_button").first().addClass("text_only");
+				},
+
+				update_param_value: function (params, val) {
+					// Change value
+					if (params.current_value != val) {
+						params.current_value = val;
+						if (val == params.last_value) {
+							// Same
+							var cont = params.container, multiple, changes = false;
+							if (!cont) {
+								cont = params.parent_container;
+								multiple = true;
+							}
+							else {
+								multiple = cont.hasClass("multiple");
+							}
+
+							if (multiple) {
+								// Check for changes; kind of a long loop since structures don't reference the parent
+								var t = this.data.tabs, c, found = false;
+								for (var i = 0, j, k; i < t.length; ++i) {
+									for (j = 0; j < t[i].sections.length; ++j) {
+										c = t[i].sections[j].contents;
+										for (k = 0; k < c.length; ++k) {
+											if (c[k].container == cont) {
+												// Original container
+												found = true;
+												if (c[k].current_value != c[k].last_value) {
+													changes = true;
+													break;
+												}
+											}
+											else if (found) {
+												if (c[k].container == null) {
+													// Child container
+													if (c[k].current_value != c[k].last_value) {
+														changes = true;
+														break;
+													}
+												}
+												else {
+													// New container
+													break;
+												}
+											}
+										}
+										if (found) break;
+									}
+									if (found) break;
+								}
+							}
+							if (!changes) {
+								cont.removeClass("changed");
+							}
+						}
+						else {
+							// Different
+							this_private.apply_change_status.call(this);
+							(params.container || params.parent_container).addClass("changed");
+						}
+					}
+				},
+
+				on_close: function (event, self) {
+					self.data.popup = null;
+					this_private.trigger.call(self, "close", {});
+
+					// Close menus
+					if (self.data.mode_menu != null) {
+						self.data.mode_menu.close();
+					}
+
+					for (var i = 0, j, k, cont; i < self.data.tabs.length; ++i) {
+						for (j = 0; j < self.data.tabs[i].sections.length; ++j) {
+							cont = self.data.tabs[i].sections[j].contents;
+							for (k = 0; k < cont.length; ++k) {
+								if (cont[k].menu) {
+									cont[k].menu.close();
+								}
+							}
+						}
+					}
+
+					self.data.tabs = [];
+					self.data.mode_changer = null;
+					self.data.container = null;
+				},
+				on_button_click: function (event) {
+					if (event.which != 1) return true;
+
+					switch (event.data.callback_data.button_id) {
+						case 0: // Close
+						{
+							event.data.popup.close();
+						}
+						break;
+						case 1: // Save
+						{
+							if (!$(this).hasClass("text_only")) {
+								this_private.save_changes.call(event.data.callback_data.self);
+							}
+						}
+						break;
+					}
+				},
+
 				on_tab_click: function (event) {
 					if (event.which != 1) return true;
 
+					var self = event.data.self.data;
+
 					// Hide old tab
-					if (event.data.self.tab_current >= 0) {
-						event.data.self.tabs[event.data.self.tab_current].container.removeClass("current");
-						event.data.self.tabs[event.data.self.tab_current].content.addClass("hidden");
+					if (self.tab_current >= 0) {
+						self.tabs[self.tab_current].container.removeClass("current");
+						self.tabs[self.tab_current].content.addClass("hidden");
 					}
 
 					// Show new
-					event.data.self.tab_current = event.data.index;
-					event.data.self.tabs[event.data.self.tab_current].container.addClass("current");
-					event.data.self.tabs[event.data.self.tab_current].content.removeClass("hidden");
+					self.tab_current = event.data.index;
+					self.tabs[self.tab_current].container.addClass("current");
+					self.tabs[self.tab_current].content.removeClass("hidden");
+
+					// Scroll
+					event.data.scroll_container.scrollTop(0);
 				},
 
-				on_input_checkbox_change: function (event) {
+				on_mode_change_click: function (event) {
+					if (event.which != 1) return true;
+
+					var self = event.data.self.data;
+
+					if (self.mode_menu == null) {
+						// Options
+						var options = [];
+						var pairs = [
+							["Basic",Settings.modes.NORMAL_AND_BELOW],
+							["Advanced",Settings.modes.ADVANCED_AND_BELOW],
+							["Technical",Settings.modes.TECHNICAL_AND_BELOW]
+						];
+						if (event.shiftKey) pairs.push(["Debug",Settings.modes.DEBUG_AND_BELOW]);
+
+						for (var i = 0; i < pairs.length; ++i) {
+							options.push({
+								text: pairs[i][0],
+								on: {
+									click: {
+										callback_data: {
+											self: event.data.self,
+											mode: pairs[i][1]
+										},
+										callback: this_private.on_mode_change_option_click
+									}
+								}
+							});
+						}
+
+						// Menu
+						self.mode_menu = new xch.Menu($(this), {
+							close_on_mouseleave: false,
+							keep_on_screen: true,
+							open: "down",
+							on: {
+								close: {
+									callback_data: event.data.self,
+									callback: this_private.on_mode_change_menu_close
+								}
+							},
+							options: options
+						});
+					}
 				},
-				on_input_textbox_change: function (event) {
+				on_mode_change_option_click: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.option.menu.close();
+
+					var m = event.data.callback_data.mode;
+					if (m != event.data.callback_data.self.data.mode) {
+						this_private.set_mode.call(event.data.callback_data.self, m);
+					}
+				},
+				on_mode_change_menu_close: function (event, self) {
+					self.data.mode_menu = null;
+				},
+
+				on_input_menu_click: function (event) {
+					if (event.which != 1) return true;
+
+					if (event.data.params.menu) {
+						event.data.params.menu.close();
+					}
+
+					// Options
+					var obj = $(this);
+					var opts = event.data.params.value.options;
+					var options = [], found = false;
+					for (var i = 0; i < opts.length; ++i) {
+						options.push({
+							text: opts[i].label,
+							on: {
+								click: {
+									callback_data: {
+										value: opts[i].value,
+										event_data: event.data,
+										display: opts[i].label,
+										obj: obj
+									},
+									callback: this_private.on_input_menu_option_click
+								}
+							}
+						});
+						if (!found && event.data.params.current_value == opts[i].value) {
+							found = true;
+						}
+					}
+					// Custom?
+					if (!found) {
+						options.push({
+							text: this_private.param_value_to_string.call(event.data.self, event.data.params, true),
+							on: {
+								click: {
+									callback_data: {
+										value: event.data.params.current_value,
+										event_data: event.data,
+										obj: obj
+									},
+									callback: this_private.on_input_menu_option_click
+								}
+							}
+						});
+					}
+
+
+					// Menu
+					event.data.params.menu = new xch.Menu($(this), {
+						close_on_mouseleave: false,
+						keep_on_screen: true,
+						open: "down",
+						on: {
+							close: {
+								callback_data: event.data,
+								callback: this_private.on_input_menu_close
+							}
+						},
+						options: options
+					});
+					(event.data.params.container || event.data.params.parent_container).addClass("active");
+				},
+				on_input_menu_close: function (event, callback_data) {
+					// Nullify menu reference
+					callback_data.params.menu = null;
+					(callback_data.params.container || callback_data.params.parent_container).removeClass("active");
+				},
+				on_input_menu_option_click: function (event) {
+					if (event.which != 1) return true;
+
+					// Close menu
+					event.data.option.menu.close();
+
+					// Get value
+					var value = event.data.callback_data.value;
+
+					// Change value
+					var event_data = event.data.callback_data.event_data;
+					this_private.update_param_value.call(event_data.self, event_data.params, value);
+
+					// Change display
+					event.data.callback_data.obj.attr("display_value", event.data.callback_data.display);
+				},
+				on_input_checkbox_change: function (event) {
+					var obj = $(this);
+					var val = obj.is(":checked");
+
+					if (event.data.params.value.invert) val = !val;
+
+					// Change value
+					this_private.update_param_value.call(event.data.self, event.data.params, val);
+				},
+				on_input_radiobox_change: function (event) {
+					var obj = $(this);
+					var val = obj.is(":checked");
+
+					if (!val) {
+						// Re-select
+						obj.prop("checked", true);
+					}
+					else {
+						// De-select others
+						for (var i = 0; i < event.data.inputs.length; ++i) {
+							if (this == event.data.inputs[i].input[0]) {
+								val = event.data.inputs[i].value;
+							}
+							else {
+								event.data.inputs[i].input.prop("checked", false);
+							}
+						}
+
+						// Value change
+						this_private.update_param_value.call(event.data.self, event.data.params, val);
+					}
 				},
 				on_input_textbox_focus: function (event) {
+					var obj = $(this);
+					var sel = xch.get_selection(obj);
+					var new_val = this_private.param_value_to_string.call(event.data.self, event.data.params, false);
+
+					// Different rep
+					if (new_val != obj.val()) {
+						obj.val(new_val);
+						if (sel.start > new_val.length) sel.start = new_val.length;
+						if (sel.end > new_val.length) sel.end = new_val.length;
+						xch.set_selection(obj, sel.start, sel.end);
+					}
+
+					// Active
+					(event.data.params.container || event.data.params.parent_container).addClass("active");
 				},
 				on_input_textbox_blur: function (event) {
+					var obj = $(this);
+					var val = obj.val();
+					val = this_private.param_value_from_string.call(event.data.self, event.data.params, val);
+
+					// Change value
+					this_private.update_param_value.call(event.data.self, event.data.params, val);
+
+					// Change value
+					obj.val(
+						this_private.param_value_to_string.call(event.data.self, event.data.params, true)
+					);
+
+					// Inactive
+					(event.data.params.container || event.data.params.parent_container).removeClass("active");
 				},
 				on_input_slider_mousedown: function (event) {
-				},
-				on_input_slider_mouseup: function (event) {
+					if (event.which != 1) return true;
+
+					var par = event.data.grabber.parent();
+
+					var data = {
+						original: event.data,
+						value: event.data.params.current_value,
+						offset: 0,
+						left: par.offset().left,
+						width: par.width()
+					};
+
+					$(window)
+					.on("mouseup", data, this_private.on_input_slider_window_mouseup)
+					.on("mousemove", data, this_private.on_input_slider_window_mousemove);
+
+					// Trigger
+					this_private.on_input_slider_window_mousemove_update.call(event.data.self, data, event.pageX, event.shiftKey);
+
+					// Active
+					(event.data.params.container || event.data.params.parent_container).addClass("active");
+
+					return false;
 				},
 				on_input_slider_grabber_mousedown: function (event) {
+					if (event.which != 1) return true;
+
+					var par = event.data.grabber.parent();
+
+					var data = {
+						original: event.data,
+						value: event.data.params.current_value,
+						offset: $(this).offset().left - event.pageX,
+						left: par.offset().left,
+						width: par.width()
+					};
+
+					$(window)
+					.on("mouseup", data, this_private.on_input_slider_window_mouseup)
+					.on("mousemove", data, this_private.on_input_slider_window_mousemove);
+
+					// Active
+					(event.data.params.container || event.data.params.parent_container).addClass("active");
+
+					return false;
 				},
-				on_input_slider_grabber_mouseup: function (event) {
+				on_input_slider_window_mouseup: function (event) {
+					// Turn off events
+					$(window)
+					.off("mouseup", this_private.on_input_slider_window_mouseup)
+					.off("mousemove", this_private.on_input_slider_window_mousemove);
+
+					// Update value
+					this_private.update_param_value.call(event.data.original.self, event.data.original.params, event.data.value);
+
+					// Inactive
+					(event.data.original.params.container || event.data.original.params.parent_container).removeClass("active");
+				},
+				on_input_slider_window_mousemove: function (event) {
+					// Change
+					this_private.on_input_slider_window_mousemove_update.call(event.data.original.self, event.data, event.pageX, event.shiftKey);
+				},
+
+				on_input_slider_window_mousemove_update: function (mm_data, mouse_x, snap) {
+					var value = Math.max(0, Math.min(1, (mouse_x - mm_data.left + mm_data.offset) / mm_data.width));
+
+					// Adjust to range
+					var val = mm_data.original.params.value;
+					value = (value * (val.max - val.min)) + val.min;
+					if (val.type == "integer") value = Math.round(value);
+					if (mm_data.value == value) return; // no change
+
+					// Snapping
+					if ("snap" in val && (val.force_snap || ((!val.auto_snap) == snap))) {
+						value = Math.round(value / val.snap) * val.snap;
+					}
+
+					// Position
+					mm_data.original.grabber.css("left", ((value - val.min) / (val.max - val.min) * 100).toFixed(2) + "%");
+
+					// Update display
+					var d_max = ("decimals" in val ? val.decimals : 3);
+					var d_min = ("decimals_min" in val ? val.decimals_min : 0);
+					mm_data.original.value_display.attr("display_value", xch.format_decimal(value, d_max, d_min));
+
+					if ("units" in val && (mm_data.value == 1) != (value == 1)) {
+						mm_data.original.value_display.attr("display_units", value == 1 ? this_private.singular.call(this, val.units) : val.units);
+					}
+
+					// Set
+					mm_data.value = value;
+				},
+
+				load_all: function () {
+					for (var key in load) {
+						load[key].call(this, false);
+					}
+				},
+
+				on_cross_tab_save: function (event, self) {
+					if (event.value in load) {
+						load[event.value].call(self, true);
+					}
 				}
 
 			};
@@ -2373,11 +3373,17 @@ var xch = (function () {
 						// Remove unneeded
 						delete params["tab"];
 						delete params["section"];
+						if ("menu" in params) delete params["menu"];
 
 						// Add defaults
 						if (!("mode" in params)) {
 							params.mode = Settings.modes.NORMAL;
 						}
+						params.container = null;
+
+						// Values
+						params.last_value = this_private.get_value.call(this, params.target, this.data.target_objects);
+						params.current_value = params.last_value;
 
 						// Append
 						section.contents.push(params);
@@ -2389,22 +3395,24 @@ var xch = (function () {
 				},
 
 				tab: function (tab_name) {
-					for (var i = 0; i < this.tabs.length; ++i) {
-						if (tab_name == this.tabs[i].name) return this.tabs[i];
+					for (var i = 0; i < this.data.tabs.length; ++i) {
+						if (tab_name == this.data.tabs[i].name) return this.data.tabs[i];
 					}
 					var t = new Tab(tab_name);
-					this.tabs.push(t);
+					this.data.tabs.push(t);
 					return t;
 				},
 
 				open: function (init_function) {
-					this.popup = new xch.Popup({
+					this.data.popup = new xch.Popup({
 						title: "Settings",
 						html: this.create(init_function),
 						size: {
 							width: 640,
 							height: "80%"
 						},
+						resize: true,
+						scroll: false,
 						on: {
 							close: {
 								callback: this_private.on_close,
@@ -2413,6 +3421,18 @@ var xch = (function () {
 						},
 						no_close: true,
 						buttons: [{
+							text: "Save",
+							text_only: true,
+							on: {
+								click: {
+									callback_data: {
+										self: this,
+										button_id: 1
+									},
+									callback: this_private.on_button_click
+								}
+							}
+						}, {
 							text: "Close",
 							on: {
 								click: {
@@ -2423,28 +3443,18 @@ var xch = (function () {
 									callback: this_private.on_button_click
 								}
 							}
-						}, {
-							text: "Save",
-							on: {
-								click: {
-									callback_data: {
-										self: this,
-										button_id: 1
-									},
-									callback: this_private.on_button_click
-								}
-							}
 						}]
 					});
 				},
 				is_open: function () {
-					return (this.popup != null);
+					return (this.data.popup != null);
 				},
 
 				create: function (init_function) {
 					// Init
-					this.tabs = [];
-					this.tab_current = 0;
+					this.data.tabs = [];
+					this.data.tab_current = 0;
+					this.data.target_objects = this_private.get_target_objects.call(this);
 					init_function.call(this);
 
 					// Create
@@ -2457,13 +3467,22 @@ var xch = (function () {
 							.append(
 								style.e("div", "settings_tabs_inner_1")
 								.append(
-									style.e("div", "settings_tabs_end_spacing")
-								)
-								.append(
-									(tab_container = style.e("div", "settings_tabs_inner_2"))
-								)
-								.append(
-									style.e("div", "settings_tabs_end_spacing")
+									style.e("div", "settings_tabs_inner_2")
+									.append(
+										style.e("div", "settings_tabs_end_spacing")
+									)
+									.append(
+										(tab_container = style.e("div", "settings_tabs_inner_3"))
+									)
+									.append(
+										style.e("div", "settings_tabs_end_spacing")
+										.append(
+											style.e("div", "settings_tabs_end_spacing_inner")
+											.append(
+												(this.data.mode_changer = style.e("span", "settings_tabs_end_spacing_mode"))
+											)
+										)
+									)
 								)
 							)
 						)
@@ -2481,34 +3500,39 @@ var xch = (function () {
 						)
 					); //}
 
-					// Tabs
-					for (var i = 0; i < this.tabs.length; ++i) {
+					// Events
+					this_private.set_mode_text.call(this);
+					this.data.mode_changer.on("click", { self: this }, this_private.on_mode_change_click);
+
+					// Sections
+					var tab_first = true, tab_count = 0, section_first, section_count, option_first, option_count, reselect_tab = false;
+					for (var i = 0, j, k, c, s, s_outer, sec, item, data; i < this.data.tabs.length; ++i) {
+						// Tab
 						tab_container.append(
-							(this.tabs[i].container = style.e("div", "settings_tab" + (i == this.tab_current ? " current" : "")))
+							(this.data.tabs[i].container = style.e("div", "settings_tab" + (i == this.data.tab_current ? " current" : "")))
 							.append(
 								style.e("div", "settings_tab_inner_1")
 								.append(
 									style.e("div", "settings_tab_inner_2")
-									.text(this.tabs[i].name)
+									.text(this.data.tabs[i].name)
 								)
 							)
 						);
+						this.data.tabs[i].container.on("click", { self: this, index: i, tab: this.data.tabs[i], scroll_container: content_container }, this_private.on_tab_click);
 
-						this.tabs[i].container.on("click", { self: this, index: i, tab: this.tabs[i] }, this_private.on_tab_click);
-					}
-
-					// Sections
-					for (var i = 0, j, k, c, s, sec; i < this.tabs.length; ++i) {
+						// Content
 						content_container.append(
-							(c = style.e("div", "settings_content" + (i == this.tab_current ? "" : " hidden")))
+							(c = style.e("div", "settings_content" + (i == this.data.tab_current ? "" : " hidden")))
 						);
-						this.tabs[i].content = c;
+						this.data.tabs[i].content = c;
 
-						for (j = 0; j < this.tabs[i].sections.length; ++j) {
-							sec = this.tabs[i].sections[j];
+						section_first = true;
+						section_count = 0;
+						for (j = 0; j < this.data.tabs[i].sections.length; ++j) {
+							sec = this.data.tabs[i].sections[j];
 
 							c.append(
-								style.e("div", "settings_section")
+								(s_outer = style.e("div", "settings_section"))
 								.append(
 									style.e("div", "settings_section_title")
 									.text(sec.name)
@@ -2517,27 +3541,95 @@ var xch = (function () {
 									(s = style.e("div", "settings_section_content"))
 								)
 							);
+							sec.container = s_outer;
 
-							var data = {};
+							option_first = true;
+							option_count = 0;
+							data = {};
 							for (k = 0; k < sec.contents.length; ++k) {
 								// Append
-								s.append(this_private.create_item.call(this, sec.contents[k], data));
+								item = this_private.create_item.call(this, sec.contents[k], data);
+								if (item != null) {
+									s.append(item);
+									// Item
+									if ((sec.contents[k].mode & this.data.mode) != 0) {
+										if (option_first) {
+											item.addClass("first");
+											option_first = false;
+										}
+										if ((++option_count % 2) == 1) {
+											item.addClass("odd");
+										}
+									}
+									else {
+										item.addClass("hidden");
+									}
+								}
+							}
+
+							// Section
+							if (option_count > 0) {
+								if (section_first) {
+									s_outer.addClass("first");
+									section_first = false;
+								}
+								if ((++section_count % 2) == 1) {
+									s_outer.addClass("odd");
+								}
+							}
+							else {
+								s_outer.addClass("hidden");
+							}
+						}
+
+						// Tab
+						if (section_count > 0) {
+							if (tab_first) {
+								this.data.tabs[i].container.addClass("first");
+								tab_first = false;
+							}
+							if ((++tab_count % 2) == 1) {
+								this.data.tabs[i].container.addClass("odd");
+							}
+						}
+						else {
+							this.data.tabs[i].container.addClass("hidden");
+							if (this.data.tab_current == i) {
+								reselect_tab = true;
+							}
+						}
+					}
+
+					// Tab change
+					if (reselect_tab) {
+						this.data.tabs[this.data.tab_current].container.removeClass("current");
+						this.data.tabs[this.data.tab_current].content.addClass("hidden");
+						for (this.data.tab_current = 0; this.data.tab_current < this.data.tabs.length; ++this.data.tab_current) {
+							if (!this.data.tabs[this.data.tab_current].container.hasClass("hidden")) {
+								this.data.tabs[this.data.tab_current].container.addClass("current");
+								break;
 							}
 						}
 					}
 
 					// Done
+					this.container = html;
 					return html;
 				},
 
 				default_settings: function () {
 
+					var tab, section;
+
+					tab = this.add({ tab: "Posts" });
+					section = this.add({ tab: tab, section: "Appearance" });
 					this.add({
-						tab: "Posts",
-						section: "Appearance",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "radio",
+							reverse: true,
 							on: "In footer",
 							off: "In header"
 						},
@@ -2547,37 +3639,54 @@ var xch = (function () {
 						mode: Settings.modes.NORMAL
 					});
 
+					section = this.add({ tab: tab, section: "Date Formatting" });
 					this.add({
-						tab: "Posts",
-						section: "Date formatting",
+						tab: tab,
+						section: section,
 						value: {
 							type: "string",
 							select: "textbox"
 						},
 						target: "settings.post.time.format",
 						label: "Time formatting",
-						description: "The time format to use",
+						description: (
+							style.e("div")
+							.append(style.t("The time format to use; for reference, see "))
+							.append(
+								style.e("a")
+								.attr("href", "http://php.net/manual/en/function.date.php")
+								.attr("target", "_blank")
+								.text("this link")
+							)
+						),
 						mode: Settings.modes.NORMAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Date formatting",
+						tab: tab,
+						section: section,
 						value: {
 							type: "integer",
 							select: "textbox",
-							min: 0,
+							min: -86400,
 							max: 86400,
+							adjust_pre: function (value) {
+								return value / 1000;
+							},
+							adjust_post: function (value) {
+								return value * 1000;
+							},
 							units: "seconds"
 						},
 						target: "settings.post.time.offset",
 						label: "Timezone offset",
-						description: "Time to offset the server time by (in seconds)",
+						description: "Time to offset the server time by",
 						mode: Settings.modes.NORMAL
 					});
 
+					section = this.add({ tab: tab, section: "Fetching" });
 					this.add({
-						tab: "Posts",
-						section: "Fetching",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2590,8 +3699,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Parsing Groups",
+						tab: tab,
+						section: section,
 						value: {
 							type: "integer",
 							select: "textbox",
@@ -2606,8 +3715,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Parsing Groups",
+						tab: tab,
+						section: section,
 						value: {
 							type: "number",
 							select: "slider",
@@ -2623,8 +3732,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Parsing Groups",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2637,9 +3746,10 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 
+					section = this.add({ tab: tab, section: "Inline Expansion" });
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2652,9 +3762,10 @@ var xch = (function () {
 						mode: Settings.modes.NORMAL
 					});
 
+					section = this.add({ tab: tab, section: "Inline Highlighting" });
 					this.add({
-						tab: "Posts",
-						section: "Inline Highlighting",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2667,8 +3778,8 @@ var xch = (function () {
 						mode: Settings.modes.ADVANCED
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Highlighting",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2681,8 +3792,8 @@ var xch = (function () {
 						mode: Settings.modes.ADVANCED
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Highlighting",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2695,8 +3806,8 @@ var xch = (function () {
 						mode: Settings.modes.ADVANCED
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Highlighting",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2709,9 +3820,10 @@ var xch = (function () {
 						mode: Settings.modes.ADVANCED
 					});
 
+					section = this.add({ tab: tab, section: "Inline Expansion Actions" });
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2720,12 +3832,15 @@ var xch = (function () {
 						},
 						target: "settings.post.inlining.on_screen.complete.inline",
 						label: "When original post is completely on screen",
-						description: "What actions to take when the referenced post is completely on screen",
+						description: [
+							"Actions to take when the referenced post is completely on screen",
+							"(Scrolling / highlighting only occur when embedding is disabled)"
+						],
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2736,8 +3851,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2748,8 +3863,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2761,8 +3876,8 @@ var xch = (function () {
 					});
 
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2771,12 +3886,15 @@ var xch = (function () {
 						},
 						target: "settings.post.inlining.on_screen.partial.inline",
 						label: "When original post is partially on screen",
-						description: "What actions to take when the referenced post is partially on screen",
+						description: [
+							"Actions to take when the referenced post is partially on screen",
+							"(Scrolling / highlighting only occur when embedding is disabled)"
+						],
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2787,8 +3905,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2799,8 +3917,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2812,8 +3930,8 @@ var xch = (function () {
 					});
 
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2822,12 +3940,15 @@ var xch = (function () {
 						},
 						target: "settings.post.inlining.on_screen.none.inline",
 						label: "When original post is not on screen",
-						description: "What actions to take when the referenced post is completely off screen",
+						description: [
+							"Actions to take when the referenced post is completely off screen",
+							"(Scrolling / highlighting only occur when embedding is disabled)"
+						],
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2838,8 +3959,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2850,8 +3971,8 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 					this.add({
-						tab: "Posts",
-						section: "Inline Expansion Actions",
+						tab: tab,
+						section: section,
 						value: {
 							type: "boolean",
 							select: "checkbox",
@@ -2862,12 +3983,16 @@ var xch = (function () {
 						mode: Settings.modes.TECHNICAL
 					});
 
+
+					tab = this.add({ tab: "Sourcing" });
+					section = this.add({ tab: tab, section: "Image Sourcing" });
 					this.add({
-						tab: "Sourcing",
-						section: "Image Sourcing",
+						tab: tab,
+						section: section,
 						value: {
 							type: "string",
-							select: "textarea"
+							select: "textarea",
+							height: 240
 						},
 						target: "settings.sourcing.source_text",
 						label: "Sourcing info for images",
@@ -2898,16 +4023,526 @@ var xch = (function () {
 						mode: Settings.modes.NORMAL
 					});
 
+
+					tab = this.add({ tab: "Updater" });
+					section = this.add({ tab: tab, section: "Window Title" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "string",
+							select: "textbox"
+						},
+						target: "updater.title.prefix",
+						label: "Window title prefix",
+						description: "Modifiers: %replies, %read, %unread",
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "string",
+							select: "textbox"
+						},
+						target: "updater.title.suffix",
+						label: "Window title suffix",
+						description: "Modifiers: %replies, %read, %unread",
+						mode: Settings.modes.ADVANCED
+					});
+
+					section = this.add({ tab: tab, section: "Time Limits" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Auto start",
+							off: "No auto start"
+						},
+						target: "updater.countdown_settings.auto_start",
+						label: "Auto start",
+						description: "Automatically start the countdown timer when opening a new thread",
+						mode: Settings.modes.NORMAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							units: "seconds"
+						},
+						target: "updater.countdown_settings.initial",
+						label: "Initial countdown time",
+						description: "Initial time the countdown timer waits when first started",
+						mode: Settings.modes.NORMAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							units: "seconds"
+						},
+						target: "updater.countdown_settings.minimum",
+						label: "Minimum countdown time",
+						description: "Minimum time the countdown timer waits before updating",
+						mode: Settings.modes.NORMAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							units: "seconds"
+						},
+						target: "updater.countdown_settings.maximum",
+						label: "Maximum countdown time",
+						description: "Maximum time the countdown timer waits before updating",
+						mode: Settings.modes.NORMAL
+					});
+
+					section = this.add({ tab: tab, section: "Reset Behavior" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "enum",
+							select: "menu",
+							options: [{
+								label: "Never",
+								value: xch.Updater.RESET_NEVER
+							}, {
+								label: "Only if time increases",
+								value: xch.Updater.RESET_IF_INCREASES
+							}, {
+								label: "Only if time decreases",
+								value: xch.Updater.RESET_IF_DECREASES
+							}, {
+								label: "Always",
+								value: xch.Updater.RESET_ALWAYS
+							}]
+						},
+						target: "updater.countdown_settings.reset_on_auto_enable",
+						label: "Reset on auto update enabled",
+						description: "Reset the time when automatic updating is changed to enabled",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "enum",
+							select: "menu",
+							options: [{
+								label: "Never",
+								value: xch.Updater.RESET_NEVER
+							}, {
+								label: "Only if time increases",
+								value: xch.Updater.RESET_IF_INCREASES
+							}, {
+								label: "Only if time decreases",
+								value: xch.Updater.RESET_IF_DECREASES
+							}, {
+								label: "Always",
+								value: xch.Updater.RESET_ALWAYS
+							}]
+						},
+						target: "updater.countdown_settings.reset_on_manual_if_auto_enabled",
+						label: "Reset on manual update (auto enabled)",
+						description: "Reset the time when a manual update is performed while automatic updating is enabled",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "enum",
+							select: "menu",
+							options: [{
+								label: "Never",
+								value: xch.Updater.RESET_NEVER
+							}, {
+								label: "Only if time increases",
+								value: xch.Updater.RESET_IF_INCREASES
+							}, {
+								label: "Only if time decreases",
+								value: xch.Updater.RESET_IF_DECREASES
+							}, {
+								label: "Always",
+								value: xch.Updater.RESET_ALWAYS
+							}]
+						},
+						target: "updater.countdown_settings.reset_on_manual_if_auto_disabled",
+						label: "Reset on manual update (auto disabled)",
+						description: "Reset the time when a manual update is performed while automatic updating is not enabled",
+						mode: Settings.modes.TECHNICAL
+					});
+
+					section = this.add({ tab: tab, section: "Time Decrease Behavior" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							min: -1,
+							custom: {
+								"-1": "Minimum"
+							},
+							units: "seconds"
+						},
+						target: "updater.countdown_settings.decrease.amount",
+						label: "Decrease amount",
+						description: [
+							"Decrease the countdown time by this amount when thread activity occurs",
+							"-1 sets the value to the minimum"
+						],
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							min: 1
+						},
+						target: "updater.countdown_settings.decrease.count_first",
+						label: "Initial activity count",
+						description: "Thread activity must occur this many times before the first time change",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							min: 1
+						},
+						target: "updater.countdown_settings.decrease.count",
+						label: "Activity count",
+						description: "Thread activity must occur this many times before subsequent time change",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Allowed",
+							off: "Not allowed"
+						},
+						target: "updater.countdown_settings.decrease.manual",
+						label: "Perform on manual update",
+						description: "Allow a time change if a manual update was performed",
+						mode: Settings.modes.TECHNICAL
+					});
+
+					section = this.add({ tab: tab, section: "Time Increase Behavior" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							min: -1,
+							custom: {
+								"-1": "Maximum"
+							},
+							units: "seconds"
+						},
+						target: "updater.countdown_settings.increase.amount",
+						label: "Increase amount",
+						description: [
+							"Decrease the countdown time by this amount when thread activity occurs",
+							"-1 sets the value to the maximum"
+						],
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							min: 1
+						},
+						target: "updater.countdown_settings.increase.count_first",
+						label: "Initial activity count",
+						description: "Thread activity must occur this many times before the first time change",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "integer",
+							select: "textbox",
+							min: 1
+						},
+						target: "updater.countdown_settings.increase.count",
+						label: "Activity count",
+						description: "Thread activity must occur this many times before subsequent time change",
+						mode: Settings.modes.TECHNICAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Allowed",
+							off: "Not allowed"
+						},
+						target: "updater.countdown_settings.increase.manual",
+						label: "Perform on manual update",
+						description: "Allow a time change if a manual update was performed",
+						mode: Settings.modes.TECHNICAL
+					});
+
+
+					tab = this.add({ tab: "Images" });
+
+					var exts = [];
+					for (var ext in this.image_preview.enabled) {
+						if (ext == "spoiler") continue;
+						exts.push({
+							value: ext,
+							label: xch.mime_types[xch.get_mime_type_from_extension(ext)].name + " (" + ext + ")"
+						});
+					}
+
+					section = this.add({ tab: tab, section: "Preview Enabled" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Enabled",
+							off: "Disabled"
+						},
+						target: "settings.image_preview.enabled.spoiler",
+						label: "Enabled for spoiler images",
+						description: "Enable or disable the preview popup for spoiler images",
+						mode: Settings.modes.NORMAL
+					});
+					for (var i = 0; i < exts.length; ++i) {
+						this.add({
+							tab: tab,
+							section: section,
+							value: {
+								type: "boolean",
+								select: "checkbox",
+								on: "Enabled",
+								off: "Disabled"
+							},
+							target: "settings.image_preview.enabled[" + exts[i].value + "]",
+							label: "Enabled for " + exts[i].value + " images",
+							description: "Enable or disable the preview popup for " + exts[i].value + " images",
+							mode: Settings.modes.ADVANCED
+						});
+					}
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "enum",
+							select: "menu",
+							options: exts
+						},
+						target: "settings.image_preview.default",
+						label: "Default image type",
+						description: "The extension to use as a substitute for unknown extensions",
+						mode: Settings.modes.ADVANCED
+					});
+
+					section = this.add({ tab: tab, section: "Preview Timeout" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "number",
+							select: "slider",
+							min: 0,
+							max: 2,
+							snap: 0.25,
+							units: "seconds"
+						},
+						target: "settings.image_preview.open_timeout",
+						label: "Open timeout",
+						description: "Time to wait after mouse hover before the preview appears",
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "number",
+							select: "slider",
+							min: 0,
+							max: 2,
+							snap: 0.25,
+							units: "seconds"
+						},
+						target: "settings.image_preview.open_timeout_spoiler",
+						label: "Open timeout (spoiler image)",
+						description: "Time to wait after mouse hover before the preview appears for a spoiler image",
+						mode: Settings.modes.ADVANCED
+					});
+
+					section = this.add({ tab: tab, section: "Preview Zooming" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Enabled",
+							off: "Disabled"
+						},
+						target: "settings.image_preview.zooming.enabled",
+						label: "Image zooming",
+						description: "Enable zooming on image previews",
+						mode: Settings.modes.NORMAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Enabled",
+							off: "Disabled"
+						},
+						target: "settings.image_preview.upscale",
+						label: "Upscale images",
+						description: "Scale up smaller images to fit the screen",
+						mode: Settings.modes.NORMAL
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Invert",
+							off: "Don't invert"
+						},
+						target: "settings.image_preview.zooming.invert",
+						label: "Invert zoom location",
+						description: "Invert the zoom origin based on where the cursor is",
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "boolean",
+							select: "checkbox",
+							on: "Bounded",
+							off: "Unbounded"
+						},
+						target: "settings.image_preview.zooming.bounded",
+						label: "Cursor bounding",
+						description: "Keep the cursor inside the preview, even when scaling down",
+						mode: Settings.modes.ADVANCED
+					});
+
+					section = this.add({ tab: tab, section: "Preview Behavior" });
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "enum",
+							select: "menu",
+							options: [{
+								label: "Open preview",
+								value: "toggle"
+							}, {
+								label: "Open in new tab",
+								value: "tab"
+							}, {
+								label: "Embed image",
+								value: "embed"
+							}, {
+								label: "Do nothing",
+								value: "nothing"
+							}]
+						},
+						target: "settings.image_preview.click.if_closed",
+						label: "Image click action (when not previewing)",
+						description: "What action to take when the image preview is not open and the image is clicked",
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "enum",
+							select: "menu",
+							options: [{
+								label: "Close preview",
+								value: "toggle"
+							}, {
+								label: "Open in new tab",
+								value: "tab"
+							}, {
+								label: "Embed image",
+								value: "embed"
+							}, {
+								label: "Do nothing",
+								value: "nothing"
+							}]
+						},
+						target: "settings.image_preview.click.if_open",
+						label: "Image click action (when previewing)",
+						description: "What action to take when the image preview is open and the image is clicked",
+						mode: Settings.modes.ADVANCED
+					});
+					this.add({
+						tab: tab,
+						section: section,
+						value: {
+							type: "enum",
+							select: "menu",
+							options: [{
+								label: "Close preview",
+								value: "toggle"
+							}, {
+								label: "Open in new tab",
+								value: "tab"
+							}, {
+								label: "Embed image",
+								value: "embed"
+							}, {
+								label: "Do nothing",
+								value: "nothing"
+							}]
+						},
+						target: "settings.image_preview.click.if_preview",
+						label: "Image preview click action",
+						description: "What action to take when the image preview itself is clicked",
+						mode: Settings.modes.ADVANCED
+					});
+
 				},
 
 				on: function (event, callback, callback_data) {
-					if (event in this.events) {
-						this.events[event].callbacks.push([callback, callback_data]);
+					if (event in this.data.events) {
+						this.data.events[event].callbacks.push([callback, callback_data]);
 					}
 				},
 				off: function (event, callback) {
-					if (event in this.events) {
-						var e = this.events[event];
+					if (event in this.data.events) {
+						var e = this.data.events[event];
 						if (e.triggering) {
 							if (e.removals == null) e.removals = [];
 							e.removals.push(callback);
@@ -2922,17 +4557,85 @@ var xch = (function () {
 							}
 						}
 					}
+				},
+
+				match_functions: function (functions_descriptor, change_list, unique) {
+					// Format data
+					var fd = [], t_array, func, i, j, k, m;
+					for (var key in functions_descriptor) {
+						t_array = this_private.split_target.call(this, key);
+						func = functions_descriptor[key];
+
+						for (i = 0; i < fd.length; ++i) {
+							if (fd[i].func == func) {
+								fd[i].t_arrays.push(t_array);
+								break;
+							}
+						}
+						if (i == fd.length) {
+							fd.push({
+								t_arrays: [ t_array ],
+								func: func
+							});
+						}
+					}
+
+					// Check for changes
+					var fcns = [];
+					for (i = 0; i < change_list.length; ++i) {
+						for (j = 0; j < fd.length; ++j) {
+							for (k = 0; k < fd[j].t_arrays.length; ++k) {
+								if (fd[j].t_arrays[k].length <= change_list[i].t_array.length) {
+									for (m = 0; m < fd[j].t_arrays[k].length; ++m) {
+										if (fd[j].t_arrays[k][m] != change_list[i].t_array[m]) break;
+									}
+									if (m == fd[j].t_arrays[k].length) {
+										// Make sure it's a unique function
+										for (m = (unique ? 0 : fcns.length); m < fcns.length; ++m) {
+											if (fcns[m] == fd[j].func) break;
+										}
+										if (m == fcns.length) {
+											// Add
+											fcns.push(fd[j].func);
+										}
+									}
+								}
+							}
+						}
+					}
+
+					// Done
+					return fcns;
+				},
+				get_change_apply_functions: function (change_list) {
+					return {
+						save: {
+							"image_preview": save.image_preview,
+							"sourcing": save.sourcing,
+							"post": save.post,
+							"popup": save.popup
+						},
+						apply: {
+							"post.footer_backlinks": apply_changes.to_footer_backlinks
+						}
+					};
 				}
 
 			};
 
 			Settings.modes = {
-				NORMAL: 7,
-				ADVANCED: 6,
-				TECHNICAL: 4,
+				NORMAL: 15,
+				ADVANCED: 14,
+				TECHNICAL: 12,
+				DEBUG: 8,
 				NORMAL_ONLY: 1,
 				ADVANCED_ONLY: 2,
-				TECHNICAL_ONLY: 4
+				TECHNICAL_ONLY: 4,
+				DEBUG_ONLY: 8,
+				NORMAL_AND_BELOW: 1,
+				ADVANCED_AND_BELOW: 3,
+				TECHNICAL_AND_BELOW: 7,
+				DEBUG_AND_BELOW: 15
 			};
 
 			var Tab = function (name) {
@@ -2959,6 +4662,7 @@ var xch = (function () {
 			var Section = function (name) {
 				this.name = name;
 				this.contents = [];
+				this.container = null;
 			};
 			Section.prototype = {
 
@@ -3964,13 +5668,7 @@ var xch = (function () {
 									.text(this.format_page(this.page_format.list, i + 1, this.page_count))
 								),
 								on: {
-									click: function (event) {
-										if (event.which != 1) return true;
-
-										event.data.option.menu.close();
-										location.go_to_new(event.data.option.container.attr("href"));
-										return false;
-									}
+									click: this_private.on_page_menu_option_click
 								}
 							});
 						}
@@ -3984,8 +5682,9 @@ var xch = (function () {
 							fixed_z: null,
 							open: "down",
 							on: {
-								close: function (event2) {
-									event_data.menu = null;
+								close: {
+									callback_data: event_data,
+									callback: this_private.on_page_menu_close
 								}
 							},
 							options: options
@@ -4091,6 +5790,17 @@ var xch = (function () {
 					settings.off("close", this_private.on_settings_close);
 				},
 
+				on_page_menu_close: function (event, event_data) {
+					event_data.menu = null;
+				},
+				on_page_menu_option_click: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.option.menu.close();
+					location.go_to_new(event.data.option.container.attr("href"));
+					return false;
+				},
+
 				update_screen_area: function () {
 					var h = this.container.outerHeight();
 					if (!this.fixed) {
@@ -4136,15 +5846,6 @@ var xch = (function () {
 				},
 
 				open_settings: function () {
-					new xch.Popup({
-						title: "Settings",
-						text: "Settings are not available yet, please wait warmly.",
-						size: {
-							width: 180
-						}
-					});
-					return;
-
 					if (settings.is_open()) return;
 
 					settings.on("close", this_private.on_settings_close, this);
@@ -4236,6 +5937,7 @@ var xch = (function () {
 				this.target_selector = null;
 
 				// Position and sizing settings
+				this.popup = null;
 				this.container = null;
 				this.fields = null;
 
@@ -4247,40 +5949,10 @@ var xch = (function () {
 						y: 0
 					}
 				};
-
 				this.size = {
 					width: 300,
 					height: 120
 				};
-				this.size_min = {
-					width: 64,
-					height: 20
-				};
-				this.moving = {
-					active: false,
-					offset: {
-						x: 0,
-						y: 0
-					}
-				};
-				this.resizing = {
-					active: false,
-					x: 0,
-					y: 0,
-					base_pos: {
-						x: 0,
-						y: 0
-					},
-					base_size: {
-						width: 0,
-						height: 0
-					},
-					base_mouse: {
-						x: 0,
-						y: 0
-					}
-				};
-				this.resizer_display_timer = null;
 
 				// Post data settings
 				this.post_data_names = {
@@ -4351,9 +6023,7 @@ var xch = (function () {
 							in_thread: false,
 							on_index: false
 						},
-						resize_display_time: 0.25,
-						clear_post_on_reopen: true,
-						anchor_border_size: 10
+						clear_post_on_reopen: true
 					},
 					posting: {
 						highlight_after_post: true,
@@ -4434,13 +6104,7 @@ var xch = (function () {
 				this_private.init.call(this, html);
 				this.set_target(this.target_thread);
 
-				// Window events
-				var data = { self: this, resize_timer: null };
-				$(window)
-				.on("mouseup", data, this_private.on_window_mouseup)
-				.on("mousemove", data, this_private.on_window_mousemove)
-				.on("resize", data, this_private.on_window_resize);
-
+				// Events
 				content.on("thread_update", this_private.on_thread_updated, this);
 				content.on("thread_load", this_private.on_thread_deleted, this);
 
@@ -4462,7 +6126,9 @@ var xch = (function () {
 						xch.merge_settings(pos, this.position, false);
 
 						if (apply) {
-							this.set_position(this.position.x, this.position.y, true, true);
+							if (this.popup) {
+								this.popup.set_position(this.position.x, this.position.y, true, true);
+							}
 						}
 					}
 				},
@@ -4472,7 +6138,11 @@ var xch = (function () {
 						xch.merge_settings(size, this.size, false);
 
 						if (apply) {
-							this.set_size(this.size.width, this.size.height, true);
+							if (this.popup) {
+								// Set size
+								this.popup.set_size(this.size.width, this.size.height, true);
+								this_private.update_size.call(this);
+							}
 						}
 					}
 				},
@@ -4541,52 +6211,6 @@ var xch = (function () {
 					// Update
 					if (needs_update && !self.post_context.acquiring) {
 						this_private.acquire_post_context.call(self, self.target_thread)
-					}
-				},
-
-				on_window_mouseup: function (event) {
-					if (event.data.self.moving.active) {
-						event.data.self.moving.active = false;
-
-						// Save position
-						this_private.save_position.call(event.data.self);
-					}
-					if (event.data.self.resizing.active) {
-						event.data.self.resizing.active = false;
-						// Update position
-						event.data.self.set_position(event.data.self.position.x, event.data.self.position.y, true, true);
-
-						// Save position and size
-						this_private.save_position.call(event.data.self);
-						this_private.save_size.call(event.data.self);
-					}
-				},
-				on_window_mousemove: function (event) {
-					if (event.data.self.resizing.active) {
-						this_private.resize.call(event.data.self, { x:event.pageX, y:event.pageY });
-					}
-					if (event.data.self.moving.active) {
-						var x = event.pageX - event.data.self.moving.offset.x - $(this).scrollLeft();
-						var y = event.pageY - event.data.self.moving.offset.y - $(this).scrollTop();
-
-						event.data.self.set_position(x, y, false, true);
-					}
-				},
-				on_window_resize: function (event) {
-					// Update position
-					var ev_data = event.data;
-					if (ev_data.self.container != null) {
-						ev_data.self.set_position(ev_data.self.position.x, ev_data.self.position.y, true, true);
-
-						// Short delay, so this isn't over-triggered
-						if (ev_data.resize_timer !== null) {
-							clearTimeout(ev_data.resize_timer);
-						}
-						ev_data.resize_timer = setTimeout(function () {
-							// Save position
-							ev_data.resize_timer = null;
-							this_private.save_position.call(ev_data.self);
-						}, 100);
 					}
 				},
 
@@ -4661,72 +6285,10 @@ var xch = (function () {
 					}
 				},
 
-				on_resizer_mousedown: function (event) {
-					if (event.which != 1) return true;
-
-					// Resize start
-					var ic_pos = event.data.inner_container.offset();
-					var me = $(this);
-					event.data.self.resizing.active = true;
-
-					if (me.hasClass("left")) {
-						event.data.self.resizing.x = -1;
-					}
-					else if (me.hasClass("right")) {
-						event.data.self.resizing.x = 1;
-					}
-					else {
-						event.data.self.resizing.x = 0;
-					}
-
-					if (me.hasClass("top")) {
-						event.data.self.resizing.y = -1;
-					}
-					else if (me.hasClass("bottom")) {
-						event.data.self.resizing.y = 1;
-					}
-					else {
-						event.data.self.resizing.y = 0;
-					}
-
-					event.data.self.resizing.base_pos.x = event.data.self.position.x;
-					event.data.self.resizing.base_pos.y = event.data.self.position.y;
-
-					event.data.self.resizing.base_size.width = event.data.self.size.width;
-					event.data.self.resizing.base_size.height = event.data.self.size.height;
-
-					event.data.self.resizing.base_mouse.x = event.pageX - $(window).scrollLeft();
-					event.data.self.resizing.base_mouse.y = event.pageY - $(window).scrollTop();
-
-					return false;
-				},
-				resizer_timeout_set: function (event_data) {
-					this.resizer_display_timer = setTimeout(function () {
-						event_data.resizers.removeClass("hidden");
-					}, this.settings.window.resize_display_time * 1000);
-				},
-				on_container_mouseenter: function (event) {
-					if (!event.data.self.resizing.active) {
-						if (event.data.self.resizer_display_timer !== null) {
-							clearTimeout(event.data.self.resizer_display_timer);
-						}
-						this_private.resizer_timeout_set.call(event.data.self, event.data);
-					}
-				},
-				on_container_mouseleave: function (event) {
-					if (!event.data.self.resizing.active) {
-						if (event.data.self.resizer_display_timer !== null) {
-							clearTimeout(event.data.self.resizer_display_timer);
-							event.data.self.resizer_display_timer = null;
-						}
-						event.data.resizers.addClass("hidden");
-					}
-				},
-
 				on_main_label_click: function (event) {
 					if (event.which != 1) return true;
 					// Change persistency
-					event.data.self.set_persistency(!event.data.self.container.hasClass("persistent"), false);
+					event.data.self.set_persistency(!event.data.self.persistent, false);
 				},
 				on_main_label_target_click: function (event) {
 					if (event.which != 1) return true;
@@ -4820,209 +6382,166 @@ var xch = (function () {
 
 				create: function () {
 					// Objects
-					var grabber, cont, main_label, main_label_text, close, i_name, i_email, i_subject, i_comment, i_file_name, i_file, i_file_spoiler, i_file_spoiler_input, i_file_remove, submit, resizers;
+					var main_label_text, i_name, i_email, i_subject, i_comment, i_file_name, i_file, i_file_spoiler, i_file_spoiler_input, i_file_remove, submit;
 					var i_name_remove, i_email_remove;
 
 					// Create QR
-					(this.container = style.e("div", "popup quick_reply" + (this.persistent ? " persistent" : "")))
-					.append(
-						style.e("div", "popup_background")
+					(this.container = style.e("div", "qr_content packed"))
+					.append( //{ Top
+						style.e("div", "qr_row top")
 						.append(
-							(resizers = style.e("div", "popup_resizers hidden"))
+							style.e("div", "qr_cell")
+							.attr("target_width", "33%")
+							.append(
+								style.e("div", "qr_cell_inner")
+								.append(
+									(i_name = style.e("input", "popup_input qr_input qr_name"))
+									.attr("type", "text")
+									.attr("placeholder", "Name")
+									.attr("autocomplete", "off")
+									.attr("maxlength", this.limits.name)
+								)
+								.append(
+									style.e("div", "qr_saved_settings hidden")
+									.append(style.e("div", "qr_saved_settings_v_aligner"))
+									.append(
+										style.e("span", "qr_saved_settings_inner")
+										.append(
+											(i_name_remove = style.e("a", "qr_saved_settings_unsave"))
+											.attr("title", "Unsave name")
+										)
+									)
+								)
+							)
 						)
-					)
-					.append(
-						(cont = style.e("div", "popup_content packed"))
-						.css("width", this.size.width + "px")
-						.append( //{ Label
-							(grabber = style.e("div", "qr_row grab"))
+						.append(
+							style.e("div", "qr_cell")
+							.attr("target_width", "34%")
 							.append(
-								style.e("div", "qr_cell no_bg")
-								.attr("target_width", "100%")
+								style.e("div", "qr_cell_inner")
 								.append(
-									style.e("div", "qr_cell_inner")
+									(i_email = style.e("input", "popup_input qr_input qr_email"))
+									.attr("type", "text")
+									.attr("placeholder", "Email")
+									.attr("autocomplete", "off")
+									.attr("maxlength", this.limits.email)
+								)
+								.append(
+									style.e("div", "qr_saved_settings hidden")
+									.append(style.e("div", "qr_saved_settings_v_aligner"))
 									.append(
-										(main_label = style.e("div", "qr_main_label"))
+										style.e("span", "qr_saved_settings_inner")
 										.append(
-											(main_label_text = style.e("span", "qr_main_label_prefix"))
-										)
-										.append(
-											style.e("span", "qr_main_label_target")
-											.append(
-												(this.main_label_target_link = style.e("a", "qr_main_label_target_text"))
-												.attr("target", "_blank")
-											)
+											(i_email_remove = style.e("a", "qr_saved_settings_unsave"))
+											.attr("title", "Unsave email")
 										)
 									)
 								)
 							)
+						)
+						.append(
+							style.e("div", "qr_cell")
+							.attr("target_width", "33%")
 							.append(
-								style.e("div", "qr_cell no_bg")
-								.attr("target_width", "auto")
+								style.e("div", "qr_cell_inner")
 								.append(
-									style.e("div", "qr_cell_inner")
-									.append(
-										(close = style.e("span", "qr_close"))
-									)
+									(i_subject = style.e("input", "popup_input qr_input qr_subject"))
+									.attr("type", "text")
+									.attr("placeholder", "Subject")
+									.attr("autocomplete", "off")
+									.attr("maxlength", this.limits.subject)
 								)
 							)
-						) //}
-						.append( //{ Top
-							style.e("div", "qr_row top")
+						)
+					) //}
+					.append( //{ Comment
+						style.e("div", "qr_row")
+						.append(
+							style.e("div", "qr_cell")
+							.attr("target_width", "100%")
 							.append(
-								style.e("div", "qr_cell")
-								.attr("target_width", "33%")
+								style.e("div", "qr_cell_inner")
 								.append(
-									style.e("div", "qr_cell_inner")
+									(i_comment = style.e("textarea", "popup_input qr_input qr_comment"))
+									.attr("placeholder", "Comment")
+									.attr("autocomplete", "off")
+									.css("height", this.size.height + "px")
+								)
+							)
+						)
+					) //}
+					.append( //{ Bottom
+						style.e("div", "qr_row bottom")
+						.append(
+							style.e("div", "qr_cell")
+							.attr("target_width", "100%")
+							.append(
+								style.e("div", "qr_cell_inner")
+								.append(
+									(i_file_name = style.e("input", "popup_input qr_input qr_file_name"))
+									.attr("type", "text")
+									.attr("placeholder", "File")
+									.attr("readonly", "readonly")
+									.attr("autocomplete", "off")
+								)
+								.append(
+									style.e("div", "qr_file_settings hidden")
+									.append(style.e("div", "qr_file_settings_v_aligner"))
 									.append(
-										(i_name = style.e("input", "popup_input qr_input qr_name"))
-										.attr("type", "text")
-										.attr("placeholder", "Name")
-										.attr("autocomplete", "off")
-										.attr("maxlength", this.limits.name)
-									)
-									.append(
-										style.e("div", "qr_saved_settings hidden")
-										.append(style.e("div", "qr_saved_settings_v_aligner"))
+										style.e("span", "qr_file_settings_inner")
 										.append(
-											style.e("span", "qr_saved_settings_inner")
-											.append(
-												(i_name_remove = style.e("a", "qr_saved_settings_unsave"))
-												.attr("title", "Unsave name")
-											)
+											(i_file_spoiler = style.checkbox(false, "small"))
+											.addClass("qr_file_spoiler qr_file_settings_item")
+											.attr("title", "Spoiler image")
+										)
+										.append(
+											(i_file_remove = style.e("a", "qr_file_remove qr_file_settings_item"))
+											.attr("title", "Remove file")
+										)
+										.append(
+											(i_file = style.e("input", "qr_file qr_file_settings_item"))
+											.attr("type", "file")
+											.attr("multiple", "multiple")
 										)
 									)
 								)
 							)
+						)
+						.append(
+							style.e("div", "qr_cell")
+							.attr("target_width", "64px")
 							.append(
-								style.e("div", "qr_cell")
-								.attr("target_width", "34%")
+								style.e("div", "qr_cell_inner")
 								.append(
-									style.e("div", "qr_cell_inner")
+									(submit = style.e("button", "popup_button qr_button qr_submit"))
 									.append(
-										(i_email = style.e("input", "popup_input qr_input qr_email"))
-										.attr("type", "text")
-										.attr("placeholder", "Email")
-										.attr("autocomplete", "off")
-										.attr("maxlength", this.limits.email)
-									)
-									.append(
-										style.e("div", "qr_saved_settings hidden")
-										.append(style.e("div", "qr_saved_settings_v_aligner"))
-										.append(
-											style.e("span", "qr_saved_settings_inner")
-											.append(
-												(i_email_remove = style.e("a", "qr_saved_settings_unsave"))
-												.attr("title", "Unsave email")
-											)
-										)
+										style.e("span", "qr_submit_text")
 									)
 								)
 							)
+						)
+					) //}
+					.append( //{ Status
+						style.e("div", "qr_status hidden")
+						.append(
+							style.e("div", "qr_status_inner")
 							.append(
-								style.e("div", "qr_cell")
-								.attr("target_width", "33%")
+								style.e("div", "qr_status_text")
 								.append(
-									style.e("div", "qr_cell_inner")
-									.append(
-										(i_subject = style.e("input", "popup_input qr_input qr_subject"))
-										.attr("type", "text")
-										.attr("placeholder", "Subject")
-										.attr("autocomplete", "off")
-										.attr("maxlength", this.limits.subject)
-									)
+									style.e("span", "qr_status_message")
 								)
-							)
-						) //}
-						.append( //{ Comment
-							style.e("div", "qr_row")
-							.append(
-								style.e("div", "qr_cell")
-								.attr("target_width", "100%")
 								.append(
-									style.e("div", "qr_cell_inner")
-									.append(
-										(i_comment = style.e("textarea", "popup_input qr_input qr_comment"))
-										.attr("placeholder", "Comment")
-										.attr("autocomplete", "off")
-										.css("height", this.size.height + "px")
-									)
-								)
-							)
-						) //}
-						.append( //{ Bottom
-							style.e("div", "qr_row bottom")
-							.append(
-								style.e("div", "qr_cell")
-								.attr("target_width", "100%")
-								.append(
-									style.e("div", "qr_cell_inner")
-									.append(
-										(i_file_name = style.e("input", "popup_input qr_input qr_file_name"))
-										.attr("type", "text")
-										.attr("placeholder", "File")
-										.attr("readonly", "readonly")
-										.attr("autocomplete", "off")
-									)
-									.append(
-										style.e("div", "qr_file_settings hidden")
-										.append(style.e("div", "qr_file_settings_v_aligner"))
-										.append(
-											style.e("span", "qr_file_settings_inner")
-											.append(
-												(i_file_spoiler = style.checkbox(false, "small"))
-												.addClass("qr_file_spoiler qr_file_settings_item")
-												.attr("title", "Spoiler image")
-											)
-											.append(
-												(i_file_remove = style.e("a", "qr_file_remove qr_file_settings_item"))
-												.attr("title", "Remove file")
-											)
-											.append(
-												(i_file = style.e("input", "qr_file qr_file_settings_item"))
-												.attr("type", "file")
-												.attr("multiple", "multiple")
-											)
-										)
-									)
+									style.e("span", "qr_status_attempt hidden")
 								)
 							)
 							.append(
-								style.e("div", "qr_cell")
-								.attr("target_width", "64px")
+								style.e("div", "qr_progress default")
 								.append(
-									style.e("div", "qr_cell_inner")
-									.append(
-										(submit = style.e("button", "popup_button qr_button qr_submit"))
-										.append(
-											style.e("span", "qr_submit_text")
-										)
-									)
+									style.e("div", "qr_progress_inner")
 								)
 							)
-						) //}
-						.append( //{ Status
-							style.e("div", "qr_status hidden")
-							.append(
-								style.e("div", "qr_status_inner")
-								.append(
-									style.e("div", "qr_status_text")
-									.append(
-										style.e("span", "qr_status_message")
-									)
-									.append(
-										style.e("span", "qr_status_attempt hidden")
-									)
-								)
-								.append(
-									style.e("div", "qr_progress default")
-									.append(
-										style.e("div", "qr_progress_inner")
-									)
-								)
-							)
-						) //}
-					);
+						)
+					); //}
 
 					// Properly style cells
 					var qr_cells = this.container.find(".qr_cell_inner");
@@ -5035,44 +6554,75 @@ var xch = (function () {
 
 					// Cooldown container
 					this.container.find(".qr_submit").next()
-						.addClass("qr_cooldown_container")
+					.addClass("qr_cooldown_container")
+					.append(
+						(this.cooldown.bar = style.e("div", "qr_cooldown ready"))
 						.append(
-							(this.cooldown.bar = style.e("div", "qr_cooldown ready"))
-							.append(
-								(this.cooldown.bar_inner = style.e("div", "qr_cooldown_inner"))
-							)
-						);
+							(this.cooldown.bar_inner = style.e("div", "qr_cooldown_inner"))
+						)
+					);
 
 					// Spoiler
 					if (!this.spoiler_available) {
 						i_file_spoiler.addClass("hidden");
 					}
 
-					// Resizers
-					for (var i = 0, r; i < 8; ++i) {
-						// Create resizer
-						resizers.append(
-							(r = style.e("div", "popup_resizer"))
-						)
-						if (i < 3) r.addClass("top");
-						else if (i >= 4 && i < 7) r.addClass("bottom");
-						if (i == 0 || i >= 6) r.addClass("left");
-						else if (i >= 2 && i < 5) r.addClass("right");
-					}
+					// Popup
+					this.popup = new xch.Popup({
+						title: (
+							(this.main_label = style.e("div", "qr_main_label"))
+							.append(
+								(main_label_text = style.e("span", "qr_main_label_prefix"))
+							)
+							.append(
+								style.e("span", "qr_main_label_target")
+								.append(
+									(this.main_label_target_link = style.e("a", "qr_main_label_target_text"))
+									.attr("target", "_blank")
+								)
+							)
+						),
+						html: this.container,
+						size: {
+							width: 320,
+							// height: 240
+						},
+						packed: true,
+						resize: {
+							h_object: i_comment
+						},
+						size_min: {
+							width: 64,
+							height: 20
+						},
+						scroll: false,
+						on: {
+							before_close: {
+								callback_data: this,
+								callback: this_private.on_popup_before_close
+							},
+							resize: {
+								callback_data: this,
+								callback: this_private.on_popup_resize
+							},
+							resizing: {
+								callback_data: this,
+								callback: this_private.on_popup_resizing
+							},
+							move: {
+								callback_data: this,
+								callback: this_private.on_popup_move
+							}
+						}
+					});
+
+					// Persistent
+					if (this.persistent) this.main_label.addClass("persistent");
 
 					// Events
 					var data = { self: this };
-					var r_data = { self: this, resizers: resizers };
-					var i_data;
 
-					resizers.children(".popup_resizer")
-					.on("mousedown", { self: this, inner_container: cont }, this_private.on_resizer_mousedown);
-
-					this.container
-					.on("mouseenter", r_data, this_private.on_container_mouseenter)
-					.on("mouseleave", r_data, this_private.on_container_mouseleave);
-
-					main_label.on("mousedown", this_private.cancel_event);
+					this.main_label.on("mousedown", this_private.cancel_event);
 
 					main_label_text.on("mousedown", this_private.cancel_event)
 					.on("click", data, this_private.on_main_label_click);
@@ -5080,25 +6630,26 @@ var xch = (function () {
 					this.main_label_target_link.on("mousedown", this_private.cancel_event)
 					.on("click", data, this_private.on_main_label_target_click);
 
-					close.on("mousedown", this_private.cancel_event)
-					.on("click", data, this_private.on_close_click);
-
-					grabber.on("mousedown", data, this_private.on_grabber_mousedown);
-
 					submit.on("click", data, this_private.on_submit_click);
 
 					// Input events
+					var i_data;
 					i_name.on("change", i_data = { self: this, field: "name", save: { compare:this_private.compare_post_name, save:this_private.save_post_name, target:i_name } }, this_private.on_simple_change);
 					i_name.on("blur", i_data, this_private.on_simple_blur);
 					i_name_remove.on("click", i_data, this_private.on_simple_remove);
+
 					i_email.on("change", i_data = { self: this, field: "email", save: { compare:this_private.compare_post_email, save:this_private.save_post_email, target:i_email } }, this_private.on_simple_change);
 					i_email.on("blur", i_data, this_private.on_simple_blur);
 					i_email_remove.on("click", i_data, this_private.on_simple_remove);
+
 					i_subject.on("change", i_data = { self: this, field: "subject" }, this_private.on_simple_change);
 					i_subject.on("blur", i_data, this_private.on_simple_blur);
+
 					i_comment.on("change", i_data = { self: this, field: "comment" }, this_private.on_simple_change);
 					i_comment.on("blur", i_data, this_private.on_simple_blur);
-					i_file_name.on("click", i_data = { self: this, filesel: i_file, name_editing: false }, this_private.on_file_name_click)
+
+					i_file_name
+					.on("click", i_data = { self: this, filesel: i_file, name_editing: false }, this_private.on_file_name_click)
 					.on("blur", i_data, this_private.on_file_name_blur);
 					i_file_remove.on("click", i_data, this_private.on_file_remove_click);
 					i_file.on("change", data, this_private.on_file_change);
@@ -5107,11 +6658,42 @@ var xch = (function () {
 					// List of all fields
 					this.fields = i_name.add(i_email).add(i_subject).add(i_comment).add(i_file).add(i_file_spoiler_input);
 
-					// Append
-					content.floating_container.append(this.container);
-
 					// Size
+					this.popup.set_size(this.size.width, this.size.height, true);
 					this_private.update_size.call(this);
+				},
+
+				on_popup_before_close: function (event, self) {
+					self.close();
+					return false;
+				},
+				on_popup_resize: function (event, self) {
+					// Size
+					this_private.update_size.call(self);
+
+					// Save
+					self.position.x = self.popup.position.x;
+					self.position.y = self.popup.position.y;
+					self.size.width = self.popup.size.width;
+					self.size.height = self.popup.size.height;
+					this_private.save_position.call(self);
+					this_private.save_size.call(self);
+				},
+				on_popup_resizing: function (event, self) {
+					// Update values
+					self.position.x = self.popup.position.x;
+					self.position.y = self.popup.position.y;
+					self.size.width = self.popup.size.width;
+					self.size.height = self.popup.size.height;
+					// Update size
+					this_private.update_size.call(self);
+				},
+				on_popup_move: function (event, self) {
+					self.position.x = self.popup.position.x;
+					self.position.y = self.popup.position.y;
+
+					// Save
+					this_private.save_position.call(self);
 				},
 
 				resize: function (mouse) {
@@ -5156,7 +6738,7 @@ var xch = (function () {
 
 				update_size: function () {
 					// Sizing
-					var full_size = this.container.children(".popup_content").innerWidth();
+					var full_size = this.container.innerWidth();
 					if (full_size < 1) full_size = 1;
 					var rows = this.container.find(".qr_row");
 					for (var r = 0, i; r < rows.length; ++r) {
@@ -6454,7 +8036,7 @@ var xch = (function () {
 				constructor: QuickReply,
 
 				is_open: function () {
-					return (this.container != null && !this.container.hasClass("closed"));
+					return (this.container != null && this.popup.is_visible());
 				},
 				open: function (target_thread) {
 					if (this.container == null) {
@@ -6462,17 +8044,17 @@ var xch = (function () {
 						this.clear();
 					}
 					else {
-						this.container.removeClass("closed");
+						this.popup.show();
 					}
 
 					// Settings
 					this.set_target(target_thread);
-					this.set_position(this.position.x, this.position.y, true, true);
+					this.popup.set_position(this.position.x, this.position.y, true, true);
 				},
 				close: function () {
 					// Close
 					if (this.container != null) {
-						this.container.addClass("closed");
+						this.popup.hide();
 
 						// Abort submit
 						this_private.submit_abort.call(this);
@@ -6518,7 +8100,7 @@ var xch = (function () {
 							this.target_thread = null;
 
 							if (this.container != null) {
-								this.container.attr("target_thread", "new");
+								this.main_label.attr("target_thread", "new");
 								this.main_label_target_link.attr("target_thread", "New Thread");
 							}
 						}
@@ -6545,7 +8127,7 @@ var xch = (function () {
 							}
 
 							if (this.container != null) {
-								this.container.attr("target_thread", "current");
+								this.main_label.attr("target_thread", "current");
 								this.main_label_target_link.attr("target_thread", "");
 							}
 						}
@@ -6559,7 +8141,7 @@ var xch = (function () {
 						this.target_thread = target_thread;
 
 						if (this.container != null) {
-							this.container.attr("target_thread", target_thread.id);
+							this.main_label.attr("target_thread", target_thread.id);
 
 							this.main_label_target_link
 							.attr("target_thread", ">>" + target_thread.id)
@@ -6571,12 +8153,8 @@ var xch = (function () {
 					this.persistent = persistent;
 
 					if (this.container != null) {
-						if (persistent) {
-							this.container.addClass("persistent");
-						}
-						else {
-							this.container.removeClass("persistent");
-						}
+						if (persistent) this.main_label.addClass("persistent");
+						else this.main_label.removeClass("persistent");
 					}
 
 					// Save persistency
@@ -6661,90 +8239,6 @@ var xch = (function () {
 				},
 				target_selector_is_open: function () {
 					return (this.target_selector != null);
-				},
-				set_position: function (x, y, no_anchor_updates, no_save) {
-					this.position.x = x;
-					this.position.y = y;
-
-					if (this.container != null) {
-						var bounds = content.header.get_screen_area();
-						var size = {
-							w: this.container.outerWidth(),
-							h: this.container.outerHeight()
-						};
-
-						// Bounds updating
-						if (!no_anchor_updates || this.position.anchor.x == 0) {
-							this.position.anchor.x = 0;
-							if (x + size.w > bounds.left + bounds.width - this.settings.window.anchor_border_size) {
-								this.position.anchor.x = 1;
-							}
-							if (x < bounds.left + this.settings.window.anchor_border_size) {
-								this.position.anchor.x = -1;
-							}
-						}
-
-						if (!no_anchor_updates || this.position.anchor.y == 0) {
-							this.position.anchor.y = 0;
-							if (y + size.h > bounds.top + bounds.height - this.settings.window.anchor_border_size) {
-								this.position.anchor.y = 1;
-							}
-							if (y < bounds.top + this.settings.window.anchor_border_size) {
-								this.position.anchor.y = -1;
-							}
-						}
-
-						// Position
-						if (this.position.anchor.x == 0) {
-							this.container.css("left", x + "px").css("right", "");
-						}
-						else if (this.position.anchor.x == -1) {
-							this.container.css("left", bounds.left + "px").css("right", "");
-						}
-						else {
-							this.container.css("right", ($(window).width() - (bounds.left + bounds.width)) + "px").css("left", "");
-						}
-
-						if (this.position.anchor.y == 0) {
-							this.container.css("top", y + "px").css("bottom", "");
-						}
-						else if (this.position.anchor.y == -1) {
-							this.container.css("top", bounds.top + "px").css("bottom", "");
-						}
-						else {
-							this.container.css("bottom", ($(window).height() - (bounds.top + bounds.height)) + "px").css("top", "");
-						}
-
-						// Selector
-						if (this.target_selector_is_open()) {
-							this.target_selector.update();
-						}
-					}
-
-					if (!no_save) {
-						// Save
-						this_private.save_position.call(this);
-					}
-				},
-				set_size: function (width, height, no_save) {
-					// Resize
-					this.size.width = Math.max(width, this.size_min.width);
-					this.size.height = Math.max(height, this.size_min.height);
-					if (this.container != null) {
-						this.container.children(".popup_content").css("width", this.size.width + "px");
-						this.container.find(".qr_comment").css("height", this.size.height + "px");
-					}
-
-					// Update
-					if (pos_update) {
-						this.set_position(this.position.x, this.position.y, true, true);
-					}
-					this_private.update_size.call(this);
-
-					// Save
-					if (!no_save) {
-						this_private.save_size.call(this);
-					}
 				},
 
 				validage_post: function (post_data) {
@@ -6974,6 +8468,7 @@ var xch = (function () {
 				};
 
 				this.countdown_settings = {
+					auto_start: false,
 					reset_on_manual_if_auto_enabled: Updater.RESET_NEVER,
 					reset_on_manual_if_auto_disabled: Updater.RESET_NEVER,
 					reset_on_auto_enable: Updater.RESET_IF_DECREASES,
@@ -6994,7 +8489,6 @@ var xch = (function () {
 					}
 				};
 
-				this.auto_start = false;
 				this.auto_reload_allowed = false;
 				this.auto_reload_enabled = false;
 
@@ -7026,7 +8520,7 @@ var xch = (function () {
 					},
 					sticky: {
 						posts: -1,
-						images: 250
+						images: 500
 					}
 				};
 
@@ -7039,7 +8533,6 @@ var xch = (function () {
 						y: 1
 					}
 				};
-				this.anchor_border_size = 10;
 
 				this.moving = {
 					active: false,
@@ -7065,32 +8558,58 @@ var xch = (function () {
 				this_private.load_all.call(this);
 
 				// Setup
-				this_private.init.call(this, html);
-
-				this_private.update_status_title.call(this);
-				this_private.update_status_favicon.call(this);
-
-				// Event listeners
-				content.on("thread_new", this_private.on_content_thread_new, this);
-				content.on("thread_load", this_private.on_content_thread_load, this);
-				content.on("thread_delete", this_private.on_content_thread_delete, this);
-				content.on("thread_update", this_private.on_content_thread_update, this);
-				content.on("post_load", this_private.on_content_post_load, this);
-				content.on("post_delete", this_private.on_content_post_delete, this);
-
-				var data = { self: this, timer_short: null, timer_long: null };
-				$(window).on("scroll", data, this_private.on_window_scroll);
-
-				communication.cross_tab_on("updater_save", this_private.on_cross_tab_save, this);
+				if (html != null) {
+					this_private.init.call(this, html);
+				}
 			};
 
-			var this_private = {
+			var save = {
+				countdown_settings: function () {
+					xch.site_set_value("updater_countdown_settings", this.countdown_settings);
 
-				load_all: function () {
-					// Load all settings
-					this_private.load_position.call(this, false);
+					communication.cross_tab_trigger("updater_save", {
+						value: "countdown_settings"
+					});
 				},
-				load_position: function (apply) {
+				title: function () {
+					xch.site_set_value("updater_title", this.title);
+
+					communication.cross_tab_trigger("updater_save", {
+						value: "title"
+					});
+				},
+				position: function () {
+					xch.site_set_value("updater_position", this.position);
+
+					communication.cross_tab_trigger("updater_save", {
+						value: "position"
+					});
+				}
+			};
+			var load = {
+				countdown_settings: function (apply) {
+					var set = xch.site_get_value("updater_countdown_settings", this.countdown_settings);
+					if (set !== this.countdown_settings) {
+						// Merge
+						xch.merge_settings(set, this.countdown_settings, false);
+
+						if (apply) {
+							// ...
+						}
+					}
+				},
+				title: function (apply) {
+					var set = xch.site_get_value("updater_title", this.title);
+					if (set !== this.title) {
+						// Merge
+						xch.merge_settings(set, this.title, false);
+
+						if (apply) {
+							// ...
+						}
+					}
+				},
+				position: function (apply) {
 					var pos = xch.site_get_value("updater_position", this.position);
 					if (pos !== this.position) {
 						var in_header = this.position.in_header;
@@ -7105,18 +8624,20 @@ var xch = (function () {
 							this.set_position(this.position.x, this.position.y, true, true);
 						}
 					}
-				},
-				save_position: function () {
-					xch.site_set_value("updater_position", this.position);
+				}
+			};
 
-					communication.cross_tab_trigger("updater_save", {
-						value: "position"
-					});
+			var this_private = {
+
+				load_all: function () {
+					for (var key in load) {
+						load[key].call(this, false);
+					}
 				},
 
 				on_cross_tab_save: function (event, self) {
-					if (event.value == "position") {
-						this_private.load_position.call(self, true);
+					if (event.value in load) {
+						load[event.value].call(self, true);
 					}
 				},
 
@@ -7324,6 +8845,23 @@ var xch = (function () {
 						this.set_in_header(true, true, true);
 					}
 					this.set_position(this.position.x, this.position.y, true, true);
+
+					// Title/favicon updating
+					this_private.update_status_title.call(this);
+					this_private.update_status_favicon.call(this);
+
+					// Event listeners
+					content.on("thread_new", this_private.on_content_thread_new, this);
+					content.on("thread_load", this_private.on_content_thread_load, this);
+					content.on("thread_delete", this_private.on_content_thread_delete, this);
+					content.on("thread_update", this_private.on_content_thread_update, this);
+					content.on("post_load", this_private.on_content_post_load, this);
+					content.on("post_delete", this_private.on_content_post_delete, this);
+
+					var data = { self: this, timer_short: null, timer_long: null };
+					$(window).on("scroll", data, this_private.on_window_scroll);
+
+					communication.cross_tab_on("updater_save", this_private.on_cross_tab_save, this);
 				},
 
 				on_enabler_click: function (event) {
@@ -7365,7 +8903,7 @@ var xch = (function () {
 						event.data.self.moving.active = false;
 
 						// Save position
-						this_private.save_position.call(event.data.self);
+						save.position.call(event.data.self);
 					}
 				},
 				on_window_mousemove: function (event) {
@@ -7402,7 +8940,7 @@ var xch = (function () {
 						ev_data.timer = setTimeout(function () {
 							ev_data.timer = null;
 							// Save position
-							this_private.save_position.call(ev_data.self);
+							save.position.call(ev_data.self);
 						}, 100);
 					}
 				},
@@ -7424,7 +8962,7 @@ var xch = (function () {
 					this.loader_parsing = false;
 
 					// Start timer if threads should start off with auto reload
-					if (this.auto_start) {
+					if (this.countdown_settings.auto_start) {
 						this_private.enable_auto.call(this);
 					}
 				},
@@ -8147,20 +9685,20 @@ var xch = (function () {
 							// Bounds updating
 							if (!no_anchor_updates || this.position.anchor.x == 0) {
 								this.position.anchor.x = 0;
-								if (x + size.w > bounds.left + bounds.width - this.anchor_border_size) {
+								if (x + size.w > bounds.left + bounds.width - settings.popup.anchor_border_size) {
 									this.position.anchor.x = 1;
 								}
-								if (x < bounds.left + this.anchor_border_size) {
+								if (x < bounds.left + settings.popup.anchor_border_size) {
 									this.position.anchor.x = -1;
 								}
 							}
 
 							if (!no_anchor_updates || this.position.anchor.y == 0) {
 								this.position.anchor.y = 0;
-								if (y + size.h > bounds.top + bounds.height - this.anchor_border_size) {
+								if (y + size.h > bounds.top + bounds.height - settings.popup.anchor_border_size) {
 									this.position.anchor.y = 1;
 								}
-								if (y < bounds.top + this.anchor_border_size) {
+								if (y < bounds.top + settings.popup.anchor_border_size) {
 									this.position.anchor.y = -1;
 								}
 							}
@@ -8189,7 +9727,7 @@ var xch = (function () {
 					}
 
 					if (!no_save) {
-						this_private.save_position.call(this);
+						save.position.call(this);
 					}
 				},
 
@@ -8209,7 +9747,7 @@ var xch = (function () {
 						}
 
 						if (!no_save) {
-							this_private.save_position.call(this);
+							save.position.call(this);
 						}
 						return true;
 					}
@@ -8218,7 +9756,19 @@ var xch = (function () {
 
 				is_in_header: function () {
 					return this.position.in_header;
+				},
+
+				get_change_apply_functions: function (change_list) {
+					return {
+						save: {
+							"countdown_settings": save.countdown_settings,
+							"title": save.title
+						},
+						apply: {
+						}
+					};
 				}
+
 
 			};
 
@@ -9067,26 +10617,48 @@ var xch = (function () {
 		// Popups
 		Popup: (function () {
 
+			var current_popup = null;
+
+
+
 			var Popup = function (params) {
-				this.moving = {
-					active: false,
-					offset: {
-						x: 0,
-						y: 0
-					}
-				};
-				this.anchor_border_size = 10;
+				this.open = true;
+				this.container = null;
+				this.text_input = null;
 
 				this.events = {
+					before_close: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					},
 					close: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					},
+					moving: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					},
+					move: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					},
+					resizing: {
+						triggering: false,
+						callbacks: [],
+						removals: null
+					},
+					resize: {
 						triggering: false,
 						callbacks: [],
 						removals: null
 					}
 				};
 
-				this.open = true;
-				this.container = null;
 				this.position = {
 					x: 0,
 					y: 0,
@@ -9095,7 +10667,24 @@ var xch = (function () {
 						y: 0
 					}
 				};
-				this.text_input = null;
+				this.moving = {
+					active: false,
+					offset: {
+						x: 0,
+						y: 0
+					}
+				};
+
+				this.size = {
+					width: -1,
+					height: -1
+				};
+				this.size_min = {
+					width: 64,
+					height: 64
+				};
+				this.resizing = null;
+
 
 				this_private.init.call(this, params);
 			};
@@ -9103,11 +10692,11 @@ var xch = (function () {
 			var this_private = {
 
 				init: function (params) {
-					var message_content, title_bar, close, body = null;
+					var message_content, title_bar, close, body = null, bg;
 
 					(this.container = style.e("div", "popup"))
 					.append(
-						style.e("div", "popup_background")
+						(bg = style.e("div", "popup_background"))
 					)
 					.append(
 						(message_content = style.e("div", "popup_content"))
@@ -9126,10 +10715,15 @@ var xch = (function () {
 						close.addClass("hidden");
 					}
 					if ("title" in params) {
-						title_bar.append(
-							style.e("span", "popup_title")
-							.text(params.title)
-						);
+						if (typeof(params.title) == typeof("")) {
+							title_bar.append(
+								style.e("span", "popup_title")
+								.text(params.title)
+							);
+						}
+						else {
+							title_bar.append(params.title.addClass("popup_title"));
+						}
 					}
 					if ("text" in params || "html" in params || "textarea" in params) {
 						message_content.append(
@@ -9145,6 +10739,9 @@ var xch = (function () {
 							)
 						);
 
+						if ("scroll" in params && !params.scroll) {
+							body.addClass("no_scroll");
+						}
 						if ("text" in params) {
 							body.append(
 								style.e("div", "popup_description")
@@ -9177,6 +10774,90 @@ var xch = (function () {
 							}
 						}
 					}
+					if ("size" in params) {
+						var bounds = content.header.get_screen_area();
+						if ("width" in params.size) {
+							var val = params.size.width;
+							if (typeof(val) != typeof(0)) {
+								var m = /([0-9\.]+)%/.exec(val);
+								if (m) val = parseFloat(m[1]) / 100 * bounds.width;
+							}
+							this.container.css("width", val + "px");
+						}
+						if ("height" in params.size) {
+							var val = params.size.height;
+							if (typeof(val) != typeof(0)) {
+								var m = /([0-9\.]+)%/.exec(val);
+								if (m) val = parseFloat(m[1]) / 100 * bounds.height;
+							}
+							this.container.css("height", val + "px");
+						}
+					}
+					if ("on" in params) {
+						for (var ev in params.on) {
+							if (params.on[ev] instanceof Function) {
+								this.on(ev, params.on[ev], undefined);
+							}
+							else {
+								this.on(ev, params.on[ev].callback, params.on[ev].callback_data);
+							}
+						}
+					}
+					if (params.packed) {
+						message_content.addClass("packed");
+					}
+					if (params.resize) {
+						// Resizers
+						var resizers;
+						bg.append(
+							(resizers = style.e("div", "popup_resizers hidden"))
+						);
+						// Resizers
+						for (var i = 0, r; i < 8; ++i) {
+							// Create resizer
+							resizers.append(
+								(r = style.e("div", "popup_resizer"))
+							)
+							if (i < 3) r.addClass("top");
+							else if (i >= 4 && i < 7) r.addClass("bottom");
+							if (i == 0 || i >= 6) r.addClass("left");
+							else if (i >= 2 && i < 5) r.addClass("right");
+						}
+
+						resizers.children(".popup_resizer")
+						.on("mousedown", { self: this }, this_private.on_resizer_mousedown);
+
+						this.resizing = {
+							active: false,
+							objects: [ this.container, this.container ],
+							resizers: resizers,
+							display_timer: null,
+							x: 0,
+							y: 0,
+							base_pos: {
+								x: 0,
+								y: 0
+							},
+							base_size: {
+								width: 0,
+								height: 0
+							},
+							base_mouse: {
+								x: 0,
+								y: 0
+							}
+						};
+
+						// objects
+						if (params.resize instanceof Object) {
+							if ("w_object" in params.resize) this.resizing.objects[0] = params.resize.w_object;
+							if ("h_object" in params.resize) this.resizing.objects[1] = params.resize.h_object;
+						}
+					}
+					if ("size_min" in params) {
+						if ("width" in params.size_min) this.size_min.width = params.size_min.width || 0;
+						if ("height" in params.size_min) this.size_min.height = params.size_min.height || 0;
+					}
 					if ("buttons" in params) {
 						var buttons, button;
 						message_content.append(
@@ -9195,6 +10876,9 @@ var xch = (function () {
 							if ("html" in params.buttons[i]) {
 								button.html(params.buttons[i].html);
 							}
+							if (params.buttons[i].text_only) {
+								button.addClass("text_only");
+							}
 							if ("on" in params.buttons[i]) {
 								for (var ev in params.buttons[i].on) {
 									if (params.buttons[i].on[ev] instanceof Function) {
@@ -9204,36 +10888,6 @@ var xch = (function () {
 										button.on(ev, { popup: this, callback_data: params.buttons[i].on[ev].callback_data }, params.buttons[i].on[ev].callback);
 									}
 								}
-							}
-						}
-					}
-					if ("size" in params) {
-						var bounds = content.header.get_screen_area();
-						if ("width" in params.size) {
-							var val = params.size.width;
-							if (typeof(val) != typeof(0)) {
-								var m = /([0-9\.]+)%/.exec(val);
-								if (m) val = parseFloat(m[1]) / 100 * bounds.width;
-							}
-							this.container.css("width", val + "px");
-						}
-						if ("height" in params.size) {
-							var val = params.size.height;
-							if (typeof(val) != typeof(0)) {
-								var m = /([0-9\.]+)%/.exec(val);
-								if (m) val = parseFloat(m[1]) / 100 * bounds.height;
-							}
-							this.container.css("height", val + "px");
-							if (body != null) body.addClass("fixed_height");
-						}
-					}
-					if ("on" in params) {
-						for (var ev in params.on) {
-							if (params.on[ev] instanceof Function) {
-								this.on(ev, params.on[ev], undefined);
-							}
-							else {
-								this.on(ev, params.on[ev].callback, params.on[ev].callback_data);
 							}
 						}
 					}
@@ -9247,25 +10901,77 @@ var xch = (function () {
 					var w = this.container.outerWidth();
 					var h = this.container.outerHeight();
 					var area = content.header.get_screen_area();
-					this.set_position((area.left + (area.width - w) / 2), (area.top + (area.height - h) / 2), true);
+					this.set_position((area.left + (area.width - w) / 2), (area.top + (area.height - h) / 2), true, true);
 
 					// Events
 					var data = { self: this };
-					close.on("mousedown", this_private.cancel_event)
+					close.on("mousedown", data, this_private.cancel_event)
 					.on("click", data, this_private.on_close_click);
 					title_bar.on("mousedown", data, this_private.on_grabber_mousedown);
+					this.container
+					.on("mousedown", data, this_private.on_container_mousedown)
+					.on("mouseenter", data, this_private.on_container_mouseenter)
+					.on("mouseleave", data, this_private.on_container_mouseleave);
+
+					// Activate
+					this.activate();
+				},
+
+				timeout_show_resizers: function () {
+					if (settings.popup.resize_display_time <= 0) {
+						this.resizing.resizers.removeClass("hidden");
+					}
+					else {
+						var r = this.resizing;
+						if (r.display_timer !== null) {
+							clearTimeout(r.display_timer);
+						}
+						r.display_timer = setTimeout(function () {
+							r.resizers.removeClass("hidden");
+							r.display_timer = null;
+						}, settings.popup.resize_display_time * 1000);
+					}
 				},
 
 				cancel_event: function (event) {
-					return (event.which != 1);
+					if (event.which != 1) return true;
+
+					event.data.self.activate();
+
+					return false;
 				},
 
 				on_close_click: function (event) {
 					if (event.which != 1) return true;
 
+					var returns = this_private.trigger.call(event.data.self, "before_close", {}, true);
+					for (var i = 0; i < returns.length; ++i) {
+						if (returns[i] === false) return false;
+					}
+
 					event.data.self.close();
 
 					return false;
+				},
+
+				on_container_mousedown: function (event) {
+					if (event.which != 1) return true;
+
+					event.data.self.activate();
+				},
+				on_container_mouseenter: function (event) {
+					if (event.data.self.resizing) {
+						this_private.timeout_show_resizers.call(event.data.self);
+					}
+				},
+				on_container_mouseleave: function (event) {
+					var r = event.data.self.resizing;
+					if (r) {
+						r.resizers.addClass("hidden");
+						if (r.display_timer !== null) {
+							clearTimeout(r.display_timer);
+						}
+					}
 				},
 
 				on_grabber_mousedown: function (event) {
@@ -9274,7 +10980,7 @@ var xch = (function () {
 					// Stop
 					var moving = event.data.self.moving;
 					if (moving.active) {
-						this_private.move_stop.call(event.data.messenger);
+						this_private.move_stop.call(event.data.self);
 					}
 
 					// Start
@@ -9289,6 +10995,8 @@ var xch = (function () {
 					moving.offset.x = event.pageX - o.left;
 					moving.offset.y = event.pageY - o.top;
 
+					event.data.self.activate();
+
 					// Done
 					return false;
 				},
@@ -9298,7 +11006,7 @@ var xch = (function () {
 					var x = event.pageX - win.scrollLeft() - off.x;
 					var y = event.pageY - win.scrollTop() - off.y;
 
-					event.data.self.set_position(x, y, false);
+					event.data.self.set_position(x, y, false, true);
 				},
 				on_window_mouseup: function (event) {
 					this_private.move_stop.call(event.data.self);
@@ -9313,15 +11021,135 @@ var xch = (function () {
 
 						// Stop
 						this.moving.active = false;
+						this_private.trigger.call(this, "move", {});
 					}
 				},
 
-				trigger: function (event, data) {
+				on_resizer_mousedown: function (event) {
+					if (event.which != 1) return true;
+
+					var self = event.data.self;
+					var me = $(this);
+
+					// Stop
+					if (self.resizing.active) {
+						this_private.resize_stop.call(self);
+					}
+
+					// Resize start
+					self.resizing.active = true;
+
+					if (me.hasClass("left")) {
+						self.resizing.x = -1;
+					}
+					else if (me.hasClass("right")) {
+						self.resizing.x = 1;
+					}
+					else {
+						self.resizing.x = 0;
+					}
+
+					if (me.hasClass("top")) {
+						self.resizing.y = -1;
+					}
+					else if (me.hasClass("bottom")) {
+						self.resizing.y = 1;
+					}
+					else {
+						self.resizing.y = 0;
+					}
+
+					self.resizing.base_pos.x = self.position.x;
+					self.resizing.base_pos.y = self.position.y;
+
+					self.resizing.base_size.width = self.size.width;
+					self.resizing.base_size.height = self.size.height;
+
+					if (self.resizing.base_size.width < 0) {
+						self.resizing.base_size.width = self.resizing.objects[0].outerWidth();
+					}
+					if (self.resizing.base_size.height < 0) {
+						self.resizing.base_size.height = self.resizing.objects[1].outerHeight();
+					}
+
+					self.resizing.base_mouse.x = event.pageX - $(window).scrollLeft();
+					self.resizing.base_mouse.y = event.pageY - $(window).scrollTop();
+
+					// Activate
+					self.activate();
+
+					// Start
+					$(window)
+					.on("mousemove", event.data, this_private.on_resize_window_mousemove)
+					.on("mouseup", event.data, this_private.on_resize_window_mouseup);
+
+					return false;
+				},
+				on_resize_window_mousemove: function (event) {
+					this_private.resize.call(event.data.self, { x:event.pageX, y:event.pageY });
+				},
+				on_resize_window_mouseup: function (event) {
+					this_private.resize_stop.call(event.data.self);
+				},
+				resize_stop: function () {
+					$(window)
+					.off("mousemove", this_private.on_resize_window_mousemove)
+					.off("mouseup", this_private.on_resize_window_mouseup);
+
+					this.resizing.active = false;
+					this_private.trigger.call(this, "resize", {});
+				},
+
+				resize: function (mouse) {
+					// Normalize
+					var win = $(window);
+					mouse.x -= win.scrollLeft();
+					mouse.y -= win.scrollTop();
+					var pos = this.container.offset();
+					var conts = this.resizing.objects;
+					var diff, pos_update = false;
+					var xy = ["x","y"];
+					var wh = ["width","height"];
+
+					// Resize
+					for (var i = 0; i < 2; ++i) {
+						if (this.resizing[xy[i]] != 0 && this.resizing[xy[i]] != this.position.anchor[xy[i]]) {
+							// Difference
+							diff = (mouse[xy[i]] - this.resizing.base_mouse[xy[i]]) * this.resizing[xy[i]];
+							// Bound
+							if (this.resizing.base_size[wh[i]] + diff < this.size_min[wh[i]]) {
+								diff = this.size_min[wh[i]] - this.resizing.base_size[wh[i]];
+							}
+
+							// Set values
+							this.size[wh[i]] = this.resizing.base_size[wh[i]] + diff;
+							if (this.resizing[xy[i]] == -1) {
+								this.position[xy[i]] = this.resizing.base_pos[xy[i]] - diff;
+								pos_update = true;
+							}
+
+							// Apply
+							conts[i].css(wh[i], this.size[wh[i]] + "px");
+						}
+					}
+
+					// Update
+					if (pos_update) {
+						this.set_position(this.position.x, this.position.y, true, true);
+					}
+					this_private.trigger.call(this, "resizing", {
+						position: pos_update
+					});
+				},
+
+				trigger: function (event, data, returns) {
 					// Trigger an event
-					var e = this.events[event];
+					var r_list = returns ? [] : null;
+					var e = this.events[event], r;
 					e.triggering = true;
 					for (var i = 0, j = e.callbacks.length; i < j; ++i) {
-						e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
+						r = e.callbacks[i][0].call(this, data, e.callbacks[i][1], event);
+						if (returns) r_list.push(r);
 					}
 					e.triggering = false;
 					if (e.removals != null) {
@@ -9330,6 +11158,7 @@ var xch = (function () {
 						}
 						e.removals = null;
 					}
+					return returns ? r_list : undefined;
 				}
 
 			};
@@ -9341,6 +11170,14 @@ var xch = (function () {
 
 					if (this.moving.active) {
 						this_private.move_stop.call(this);
+					}
+					if (this.resizing && this.resizing.active) {
+						this_private.resize_stop.call(this);
+					}
+
+					if (current_popup == this) {
+						this.container.removeClass("active");
+						current_popup = null;
 					}
 
 					this_private.trigger.call(this, "close", {});
@@ -9354,7 +11191,32 @@ var xch = (function () {
 					this.container = null;
 				},
 
-				set_position: function (x, y, no_anchor_updates) {
+				hide: function () {
+					if (!this.open) return;
+
+					this.container.addClass("hidden");
+				},
+				show: function () {
+					if (!this.open) return;
+
+					this.container.removeClass("hidden");
+				},
+
+				is_visible: function () {
+					return (this.open && !this.container.hasClass("hidden"));
+				},
+
+				activate: function () {
+					if (current_popup != this) {
+						if (current_popup != null) {
+							current_popup.container.removeClass("active");
+						}
+						this.container.addClass("active");
+						current_popup = this;
+					}
+				},
+
+				set_position: function (x, y, no_anchor_updates, no_trigger) {
 					this.position.x = x;
 					this.position.y = y;
 
@@ -9367,20 +11229,22 @@ var xch = (function () {
 					// Bounds updating
 					if (!no_anchor_updates || this.position.anchor.x == 0) {
 						this.position.anchor.x = 0;
-						if (x + size.w > bounds.left + bounds.width - this.anchor_border_size) {
+						if (x + size.w > bounds.left + bounds.width - settings.popup.anchor_border_size) {
 							this.position.anchor.x = 1;
+							x = bounds.left + bounds.width - size.w;
 						}
-						if (x < bounds.left + this.anchor_border_size) {
+						if (x < bounds.left + settings.popup.anchor_border_size) {
 							this.position.anchor.x = -1;
 						}
 					}
 
 					if (!no_anchor_updates || this.position.anchor.y == 0) {
 						this.position.anchor.y = 0;
-						if (y + size.h > bounds.top + bounds.height - this.anchor_border_size) {
+						if (y + size.h > bounds.top + bounds.height - settings.popup.anchor_border_size) {
 							this.position.anchor.y = 1;
+							y = bounds.top + bounds.height - size.h;
 						}
-						if (y < bounds.top + this.anchor_border_size) {
+						if (y < bounds.top + settings.popup.anchor_border_size) {
 							this.position.anchor.y = -1;
 						}
 					}
@@ -9404,6 +11268,28 @@ var xch = (function () {
 					}
 					else {
 						this.container.css("bottom", ($(window).height() - (bounds.top + bounds.height)) + "px").css("top", "");
+					}
+
+					// Event
+					if (!no_trigger) {
+						this_private.trigger.call(this, "move", {});
+					}
+				},
+				set_size: function (width, height, no_trigger) {
+					this.size.width = width;
+					this.size.height = height;
+
+					// Resize
+					if (this.resizing) {
+						this.resizing.objects[0].css("width", this.size.width + "px");
+						this.resizing.objects[1].css("height", this.size.height + "px");
+
+						this.set_position(this.position.x, this.position.y, true, no_trigger);
+					}
+
+					// Event
+					if (!no_trigger) {
+						this_private.trigger.call(this, "resize", {});
 					}
 				},
 
@@ -10373,18 +12259,7 @@ var xch = (function () {
 			var this_private = {
 
 				load_all: function () {
-					this_private.load_post_settings.call(this, false);
 					this_private.load_my_posts.call(this, false);
-				},
-				load_post_settings: function (apply) {
-					var set = xch.get_value("settings_post", settings.post);
-					if (set === settings.post) {
-						// Defaults
-						settings.post.time.offset = -(new Date()).getTimezoneOffset() * 60 * 1000;
-					}
-					else {
-						// TODO
-					}
 				},
 				load_my_posts: function (apply) {
 					var my_posts = xch.site_get_value_raw("my_posts", null);
@@ -11146,14 +13021,12 @@ var xch = (function () {
 					// Create quick reply
 					this.qr = new xch.QuickReply(context.html);
 					// Create updater
-					if (!info.index) {
-						this.updater = new xch.Updater(context.html);
-					}
+					this.updater = new xch.Updater(info.index ? null : context.html);
 
 					// Title
-					this.format_title();
-
-					this.header.open_settings(); // TODO
+					if (info.index) {
+						this.format_title();
+					}
 				},
 				parse: function (context) {
 					var self = this;
@@ -12286,10 +14159,7 @@ var xch = (function () {
 						if (data.backlink) {
 							var par_container = data.instance.container.children(".post");
 							var selector = ".post_embedded_backlink_container";
-							target_container = par_container.children(".footer:not(.hidden)").children(selector);
-							if (target_container.length == 0) {
-								target_container = par_container.children(selector);
-							}
+							target_container = par_container.children(selector).add(par_container.children(".post_footer").children(selector));
 						}
 
 						if (target_container == null || target_container.length > 0) {
@@ -12341,7 +14211,7 @@ var xch = (function () {
 						event_data.open_timer = null;
 						if (event_data.preview == null) {
 							// Create new
-							event_data.preview = event_data.image.create_preview(obj, event_data);
+							event_data.preview = event_data.image.create_preview(obj, event_data, events.image_click);
 							// Add
 							content.floating_container.append(event_data.preview);
 						}
@@ -12803,23 +14673,27 @@ var xch = (function () {
 					if (event.which != 1) return true;
 
 					// Non-deleted image
-					var obj = $(this);
+					var ev_data = event.data;
+					var is_preview = ("preview_data" in ev_data);
+
+					var obj = is_preview ? ev_data.obj : $(this);
 					if (obj.attr("href") !== undefined) {
 						// What to do on click
+						if (is_preview) ev_data = ev_data.preview_data;
 						var opt = settings.image_preview.click;
-						opt = (event.data.preview == null ? opt.if_closed : opt.if_open);
+						opt = (is_preview ? opt.if_preview : (ev_data.preview == null ? opt.if_closed : opt.if_open));
 						var par = obj.parent();
 						if (par.hasClass("embed")) opt = "embed";
 
 						// Switch
 						if (opt == "toggle") {
-							if (event.data.preview == null) {
+							if (ev_data.preview == null) {
 								// Open
-								events.open_image_preview.call(this, obj, event.data, 0);
+								events.open_image_preview.call(this, obj, ev_data, 0);
 							}
 							else {
 								// Close
-								event.data.image.close_preview(event.data);
+								ev_data.image.close_preview(ev_data);
 							}
 						}
 						else if (opt == "tab") {
@@ -12829,9 +14703,9 @@ var xch = (function () {
 						else if (opt == "embed") {
 							// Embed toggle
 							var embed = !par.hasClass("embed");
-							event.data.post.set_image_embedded(embed, event.data.instance, par);
+							ev_data.post.set_image_embedded(embed, ev_data.instance, par);
 							// Close
-							if (embed) event.data.image.destroy_preview(event.data);
+							if (embed) ev_data.image.destroy_preview(ev_data);
 						}
 						// Else, do nothing
 
@@ -13175,9 +15049,11 @@ var xch = (function () {
 						}
 
 						// Backlinks
-						header.append(
-							style.e("span", "post_backlinks empty")
-						);
+						if (!settings.post.footer_backlinks) {
+							header.append(
+								style.e("span", "post_backlinks empty")
+							);
+						}
 
 						// Options
 						header.append(
@@ -13265,18 +15141,17 @@ var xch = (function () {
 						);
 					}
 
-					// Top backlinks
-					var top_backlink_container = style.e("div", "post_embedded_backlink_container empty");
 
 					// Footer
 					var footer = style.e("div", "post_footer hidden empty");
-					footer.append(
-						style.e("span", "post_backlinks")
-					)
-					.append(
-						style.e("div", "post_embedded_backlink_container empty")
-					);
 					if (settings.post.footer_backlinks) {
+						footer.append(
+							style.e("span", "post_backlinks")
+						)
+						.append(
+							style.e("div", "post_embedded_backlink_container empty")
+						);
+
 						footer.removeClass("hidden");
 					}
 
@@ -13286,14 +15161,17 @@ var xch = (function () {
 					}
 
 					// Add contents
-					if (!this.op) {
-						inner.append(header).append(top_backlink_container);
-					}
+					if (!this.op) inner.append(header);
 					if (file_info != null) inner.append(file_info);
 					if (file_image != null) inner.append(file_image);
-					if (this.op) {
-						inner.append(header).append(top_backlink_container);
+					if (this.op) inner.append(header);
+
+					if (!settings.post.footer_backlinks) {
+						// Top backlinks
+						var top_backlink_container = style.e("div", "post_embedded_backlink_container empty");
+						header.after(top_backlink_container);
 					}
+
 					inner
 					.append(stylize_data.comment)
 					.append(style.e("div", "post_body_after"))
@@ -14128,6 +16006,48 @@ var xch = (function () {
 						}
 					}
 					return false;
+				},
+
+				update_html_backlink_location: function (in_footer) {
+					var post, header, footer, backlinks, embed_container;
+					for (var i = 0; i < this.instances.length; ++i) {
+						footer = (post = this.instances[i].container.children(".post")).children(".post_footer");
+						if (footer.hasClass("hidden") == in_footer) {
+							// Get the header
+							header = post.children(".post_header");
+
+							// Change
+							if (in_footer) {
+								backlinks = header.children(".post_backlinks");
+								embed_container = post.children(".post_embedded_backlink_container");
+
+								if (backlinks.hasClass("empty")) {
+									backlinks.removeClass("empty");
+									footer.addClass("empty");
+								}
+								else {
+									footer.removeClass("empty");
+								}
+
+								footer.removeClass("hidden").append(backlinks).append(embed_container);
+							}
+							else {
+								backlinks = footer.children(".post_backlinks");
+								embed_container = footer.children(".post_embedded_backlink_container");
+
+								if (footer.hasClass("empty")) {
+									backlinks.addClass("empty");
+								}
+								else {
+									footer.addClass("empty");
+								}
+
+								header.after(embed_container);
+								header.children(".post_settings").before(backlinks);
+								footer.addClass("hidden");
+							}
+						}
+					}
 				}
 
 			};
@@ -14607,7 +16527,7 @@ var xch = (function () {
 					}
 				},
 
-				create_preview: function (obj, event_data) {
+				create_preview: function (obj, event_data, click_event) {
 					var self = this;
 
 					// Settings
@@ -14678,8 +16598,8 @@ var xch = (function () {
 					.on("mouseleave", data, this_private.on_preview_mouseleave)
 					.on("mousedown", this_private.cancel_event);
 					outer.on("mousemove", data, this_private.on_preview_mousemove);
-					if (settings.image_preview.close_on_click) {
-						outer.on("click", data, this_private.on_preview_click);
+					if (click_event) {
+						outer.on("click", { obj: obj, preview_data: event_data }, click_event);
 					}
 					if (settings.image_preview.zooming.enabled) {
 						outer.on("mousewheel DOMMouseScroll", { self: this, event_data: event_data, obj: obj }, this_private.on_preview_mousescroll);
@@ -15537,7 +17457,7 @@ var xch = (function () {
 						border: "#0f0c5d",
 						border_hover: "#34345d",
 						check: "#080808",
-						check_hover: "#0f0c5d"
+						check_hover: "#34345d"
 					}
 				};
 
@@ -15616,7 +17536,8 @@ var xch = (function () {
 					bg: {
 						size: 4,
 						radius: 8,
-						opacity: 1,
+						opacity: 0.75,
+						active_opacity: 1,
 						color: "#d6d6f0",
 						shadow: {
 							color: "#34345c",
@@ -15687,6 +17608,9 @@ var xch = (function () {
 
 				this.qr = {
 					label: {
+						font: {
+							weight: "normal"
+						},
 						text: {
 							reply: "Reply",
 							quick_reply: "Quick Reply"
@@ -15958,6 +17882,10 @@ var xch = (function () {
 						size: "14px"
 					},
 					tabs: {
+						spacing: {
+							outer: 4,
+							inner: 4
+						},
 						bg: {
 							0: "#ffffff",
 							100: "rgba(255,255,255,0)",
@@ -15992,6 +17920,10 @@ var xch = (function () {
 									factor: 3
 								}
 							}
+						},
+						mode_select: {
+							color: "#5c6f85",
+							color_hover: "#34345c"
 						}
 					},
 					inputs: {
@@ -16001,6 +17933,15 @@ var xch = (function () {
 						},
 						textbox: {
 							width: 100
+						},
+						checkbox: {
+							separation: {
+								inner: 8,
+								outer: 8
+							},
+							colors: {
+								non_current: "#34345c"
+							}
 						},
 						slider: {
 							width: 100,
@@ -16051,6 +17992,10 @@ var xch = (function () {
 							top: 10,
 							bottom: 10
 						},
+						change_indicator: {
+							color: "#dd0000",
+							text: "*"
+						},
 						item: {
 							label: {
 								font: {
@@ -16098,7 +18043,7 @@ var xch = (function () {
 						"$.post_container.op>$.post{display:block;}\n" +
 						"$.post_container.reply>$.post{background-color:<<post.colors.bg>>;border-width:<<post.border.top>>px <<post.border.right>>px <<post.border.bottom>>px <<post.border.left>>px;border-style:<<post.border.style>>;border-color:<<post.colors.border>>;<<css.border-radius>>:<<post.border.radius.topleft>>px <<post.border.radius.topright>>px <<post.border.radius.bottomright>>px <<post.border.radius.bottomleft>>px;}\n" +
 						"$.post_container.reply.highlighted>$.post{background-color:<<post.colors.bg_hl>>;border-color:<<post.colors.border_hl>>;}\n" +
-						"$.post_container.reply.highlighted{background:transparent;}\n" +
+						"$.post_container.reply.highlighted{background-color:transparent;}\n" +
 						"$.post_container.op.focused>$.post{}\n" +
 						"$.post_container.reply.focused:not(.inline)>$.post{box-shadow:<<!shadow:post.focus.normal.shadow>>;z-index:1;}\n" +
 						"$.post_container.reply.focused.inline>$.post{box-shadow:<<!shadow:post.focus.inline.shadow>>;z-index:1;}\n" +
@@ -16378,6 +18323,27 @@ var xch = (function () {
 						'$.checkbox.normal>$.checkbox_indicator>$.checkbox_svg{width:100%;height:100%;}\n' +
 						//}
 
+						//{ Radioboxes
+						'$.radiobox{display:inline-block;line-height:0;cursor:pointer;}\n' +
+						'$.radiobox_indicator{vertical-align:middle;display:inline-block;line-height:0;overflow:hidden;cursor:pointer;vertical-align:middle;margin:0px;padding:0px;<<css.box-sizing>>:border-box;}\n' +
+						'$.radiobox_svg{opacity:1;margin:0px;padding:0px;display:block;}\n' +
+						'$.radiobox_input{display:none;}\n' +
+						'$.radiobox_input:not(:checked)+$.radiobox_indicator>$.radiobox_svg>$.radiobox_svg_g>$.radiobox_svg_tick{opacity:0;}\n' +
+						'$.radiobox_svg_bg{fill:<<checkbox_settings.colors.bg>>;}\n' +
+						'$.radiobox_svg_border{fill:<<checkbox_settings.colors.border>>;}\n' +
+						'$.radiobox_svg_tick{fill:<<checkbox_settings.colors.check>>;}\n' +
+						'$.radiobox_indicator:hover>$.radiobox_svg>$.radiobox_svg_g>$.radiobox_svg_bg{fill:<<checkbox_settings.colors.bg_hover>>;}\n' +
+						'$.radiobox_indicator:hover>$.radiobox_svg>$.radiobox_svg_g>$.radiobox_svg_border{fill:<<checkbox_settings.colors.border_hover>>;}\n' +
+						'$.radiobox_indicator:hover>$.radiobox_svg>$.radiobox_svg_g>$.radiobox_svg_tick{fill:<<checkbox_settings.colors.check_hover>>;}\n' +
+
+						'$.radiobox.tiny>$.radiobox_indicator{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;}\n' +
+						'$.radiobox.tiny>$.radiobox_indicator>$.radiobox_svg{width:<<checkbox_settings.sizes.tiny.box_size>>px;height:<<checkbox_settings.sizes.tiny.box_size>>px;}\n' +
+						'$.radiobox.small>$.radiobox_indicator{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;}\n' +
+						'$.radiobox.small>$.radiobox_indicator>$.radiobox_svg{width:<<checkbox_settings.sizes.small.box_size>>px;height:<<checkbox_settings.sizes.small.box_size>>px;}\n' +
+						'$.radiobox.normal>$.radiobox_indicator{width:<<checkbox_settings.sizes.normal.box_size>>px;height:<<checkbox_settings.sizes.normal.box_size>>px;}\n' +
+						'$.radiobox.normal>$.radiobox_indicator>$.radiobox_svg{width:100%;height:100%;}\n' +
+						//}
+
 						//{ Content padding
 						"$.content_padding.top{display:block;height:<<body.content_padding.top>>px;}\n" +
 						"$.content_padding.bottom{display:block;height:<<body.content_padding.bottom>>px;}\n" +
@@ -16440,8 +18406,10 @@ var xch = (function () {
 						//}
 
 						//{ Popups
-						"$.popup{position:fixed;z-index:170;<<css.box-sizing>>:border-box;color:<<popup.colors.text>>;padding:<<popup.bg.size>>px;<<!font:popup.font>>}\n" +
-						"$.popup_content{position:relative;display:table;height:100%;width:100%;<<css.box-sizing>>:border-box;}\n" +
+						"$.popup{position:fixed;z-index:150;<<css.box-sizing>>:border-box;color:<<popup.colors.text>>;padding:<<popup.bg.size>>px;<<!font:popup.font>>}\n" +
+						"$.popup.active{z-index:151;}\n" +
+						"$.popup.hidden{display:none;}\n" +
+						"$.popup_content{position:relative;display:table;table-layout:fixed;height:100%;width:100%;<<css.box-sizing>>:border-box;}\n" +
 						"$.popup_title_bar{cursor:move;height:0;}\n" +
 
 						"$.popup_title{text-shadow:<<!shadow:popup.title.shadow>>;<<!font:popup.title.font>>}\n" +
@@ -16449,8 +18417,8 @@ var xch = (function () {
 						"$.popup_body{height:100%;}\n" +
 						"$.popup_body_inner_1{height:100%;<<css.box-sizing>>:border-box;}\n" +
 						"$.popup_body_inner_2{position:relative;height:100%;}\n" +
-						"$.popup_body_inner_3{position:relative;}\n" +
-						"$.popup_body_inner_3.fixed_height{position:absolute;left:0;top:0;bottom:0;right:0;overflow:auto;}\n" +
+						"$.popup_body_inner_3{position:relative;overflow:auto;height:100%;}\n" +
+						"$.popup_body_inner_3.no_scroll{overflow:visible;}\n" +
 						"$.popup_content_item{display:table-row;}\n" +
 						"$.popup_content_item_inner{<<css.box-sizing>>:border-box;}\n" +
 
@@ -16459,7 +18427,7 @@ var xch = (function () {
 						"$.popup_close:after{content:\"<<symbols.mult>>\";}\n" +
 						"$.popup_close.hidden{display:none;}\n" +
 
-						"$.popup_description{<<!font:popup.description.font>>}\n" +
+						"$.popup_description{height:100%;<<!font:popup.description.font>>}\n" +
 						"$.popup_input{display:block;width:100%;<<css.box-sizing>>:border-box;resize:none;<<!font:popup.input.font>>}\n" +
 						"$.popup_input," +
 						"$.popup_button{margin:0px;padding:<<popup.input.padding>>px;background-color:<<popup.input.colors.bg>>;color:<<popup.input.colors.text>>;border:<<popup.input.border.size>>px <<popup.input.border.style>> <<popup.input.border.color>>;}\n" +
@@ -16471,7 +18439,7 @@ var xch = (function () {
 						"$.popup_content:not(.packed)>$.popup_content_item+$.popup_content_item>$.popup_content_item_inner{padding-top:<<popup.separation>>px;}\n" +
 						"$.popup_description+$.popup_input{margin-top:<<popup.separation>>px;}\n" +
 
-						"$.popup_buttons{text-align:right;height:0;}\n" +
+						"$.popup_buttons{text-align:right;height:0;white-space:nowrap;}\n" +
 
 						"$.popup_input{color:<<popup.input.colors.text>>;<<!font:popup.input.font>>}\n" +
 						"$.popup_input::-webkit-input-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
@@ -16479,10 +18447,12 @@ var xch = (function () {
 						"$.popup_input::-moz-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
 						"$.popup_input:-ms-input-placeholder{color:<<popup.input.colors.placeholder>>;opacity:<<popup.input.colors.placeholder_opacity>>;}\n" +
 
-						"$.popup_button{cursor:pointer;display:inline-block;<<css.box-sizing>>:border-box;<<!font:popup.input.font>>}\n" +
+						"$.popup_button{white-space:normal;cursor:pointer;display:inline-block;<<css.box-sizing>>:border-box;<<!font:popup.input.font>>}\n" +
+						"$.popup_button.text_only{background-color:transparent;border-color:transparent;}\n" +
 						"$.popup_button+$.popup_button{margin-left:<<popup.buttons.spacing>>px;}\n" +
 
-						"$.popup_background{position:absolute;left:0;top:0;bottom:0;right:0;background:<<popup.bg.color>>;<<css.border-radius>>:<<popup.bg.radius>>px;box-shadow:<<!shadow:popup.bg.shadow>>;opacity:<<popup.bg.opacity>>;}\n" +
+						"$.popup.active>$.popup_background{opacity:<<popup.bg.active_opacity>>;}\n" +
+						"$.popup_background{position:absolute;left:0;top:0;bottom:0;right:0;background-color:<<popup.bg.color>>;<<css.border-radius>>:<<popup.bg.radius>>px;box-shadow:<<!shadow:popup.bg.shadow>>;opacity:<<popup.bg.opacity>>;}\n" +
 						"$.popup_resizers{position:absolute;left:0;top:0;bottom:0;right:0;}\n" +
 						"$.popup_resizers.hidden{display:none;}\n" +
 						"$.popup_resizer${position:absolute;}\n" +
@@ -16501,10 +18471,10 @@ var xch = (function () {
 						//}
 
 						//{ Quick reply
-						"$.quick_reply{position:fixed;display:inline-block;z-index:115;}\n" +
+						"$.quick_reply{position:fixed;display:inline-block;}\n" +
 						"$.quick_reply.closed{display:none;}\n" +
 
-						"$.quick_reply>$.popup_content{position:relative;z-index:5;}\n" +
+						"$.qr_content{position:relative;z-index:5;}\n" +
 						"$.qr_row{display:block;line-height:0px;white-space:nowrap;position:relative;}\n" +
 						"$.qr_cell{vertical-align:middle;display:inline-block;<<css.box-sizing>>:border-box;position:relative;line-height:normal;white-space:normal;}\n" +
 
@@ -16512,7 +18482,7 @@ var xch = (function () {
 						"$.qr_cell_inner_b," +
 						"$.qr_cell_inner_l," +
 						"$.qr_cell_inner_t{position:absolute;z-index:-3;<<css.box-sizing>>:border-box;border:<<popup.input.border.size>>px <<popup.input.border.style>> <<popup.input.border.color>>;}" +
-						"$.qr_cell_inner_b{background:<<popup.input.colors.bg>>;left:0;top:0;bottom:0;right:0;}\n" +
+						"$.qr_cell_inner_b{background-color:<<popup.input.colors.bg>>;left:0;top:0;bottom:0;right:0;}\n" +
 						"$.qr_cell_inner_l{right:100%;top:0;bottom:0;border-left-width:0px;}\n" +
 						"$.qr_cell_inner_t{left:0;bottom:100%;right:0;border-top-width:0px;}\n" +
 
@@ -16520,19 +18490,19 @@ var xch = (function () {
 						"$.qr_cell:nth-of-type(n+2)>$.qr_cell_inner,\n" +
 						"$.qr_cell:nth-of-type(n+2)>$.qr_cell_inner>$.qr_cell_inner_b{border-left-width:0px;}\n" +
 						"$.qr_row.top>$.qr_cell>$.qr_cell_inner>$.qr_cell_inner_t," +
-						"$.popup_content:not(.packed)>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_cell_inner_t{display:none;}\n" +
-						"$.popup_content.packed>$.qr_row:not(.top)>$.qr_cell>$.qr_cell_inner," +
-						"$.popup_content.packed>$.qr_row:not(.top)>$.qr_cell>$.qr_cell_inner>$.qr_cell_inner_b{border-top-width:0px;}\n" +
+						"$.qr_content:not(.packed)>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_cell_inner_t{display:none;}\n" +
+						"$.qr_content.packed>$.qr_row:not(.top)>$.qr_cell>$.qr_cell_inner," +
+						"$.qr_content.packed>$.qr_row:not(.top)>$.qr_cell>$.qr_cell_inner>$.qr_cell_inner_b{border-top-width:0px;}\n" +
 
 						"$.qr_row.top>$.qr_cell:first-child>$.qr_cell_inner>$.qr_cell_inner_b{<<css.border-top-left-radius>>:<<popup.input.border.radius>>px;}\n" +
 						"$.qr_row.top>$.qr_cell:last-child>$.qr_cell_inner>$.qr_cell_inner_b{<<css.border-top-right-radius>>:<<popup.input.border.radius>>px;}\n" +
 						"$.qr_row.bottom>$.qr_cell:first-child>$.qr_cell_inner>$.qr_cell_inner_b{<<css.border-bottom-left-radius>>:<<popup.input.border.radius>>px;}\n" +
 						"$.qr_row.bottom>$.qr_cell:last-child>$.qr_cell_inner>$.qr_cell_inner_b{<<css.border-bottom-right-radius>>:<<popup.input.border.radius>>px;}\n" +
 
-						"$.qr_cell:hover>$.qr_cell_inner>$.qr_cell_inner_b," +
-						"$.qr_cell:hover>$.qr_cell_inner>$.qr_cell_inner_l," +
-						"$.qr_cell:hover>$.qr_cell_inner>$.qr_cell_inner_t{z-index:-2;border-color:<<popup.input.border.color_hover>>;}" +
-						"$.qr_cell:hover>$.qr_cell_inner>$.qr_cell_inner_b{background:<<popup.input.colors.bg_hover>>;}\n" +
+						"$.qr_input:hover+$.qr_cell_inner_b," +
+						"$.qr_input:hover+$.qr_cell_inner_b+$.qr_cell_inner_l," +
+						"$.qr_input:hover+$.qr_cell_inner_b+$.qr_cell_inner_l+$.qr_cell_inner_t{z-index:-2;border-color:<<popup.input.border.color_hover>>;}" +
+						"$.qr_input:hover+$.qr_cell_inner_b{background-color:<<popup.input.colors.bg_hover>>;}\n" +
 
 						"$.qr_input:focus+$.qr_cell_inner_b," +
 						"$.qr_input:focus+$.qr_cell_inner_b+$.qr_cell_inner_l," +
@@ -16541,31 +18511,31 @@ var xch = (function () {
 						"$.qr_button:active+$.qr_cell_inner_b+$.qr_cell_inner_l," +
 						"$.qr_button:active+$.qr_cell_inner_b+$.qr_cell_inner_l+$.qr_cell_inner_t{z-index:-1;border-color:<<popup.input.border.color_selected>>;}" +
 						"$.qr_input:focus+$.qr_cell_inner_b," +
-						"$.qr_button:active+$.qr_cell_inner_b{background:<<popup.input.colors.bg_selected>>;}\n" +
+						"$.qr_button:active+$.qr_cell_inner_b{background-color:<<popup.input.colors.bg_selected>>;}\n" +
 
 						"$.qr_cell.no_bg>$.qr_cell_inner{border-width:0px;}\n" +
 						"$.qr_cell.no_bg>$.qr_cell_inner>$.qr_cell_inner_l," +
 						"$.qr_cell.no_bg>$.qr_cell_inner>$.qr_cell_inner_t{display:none;}" +
-						"$.qr_cell.no_bg>$.qr_cell_inner>$.qr_cell_inner_b{border-width:0px;background:transparent;}\n" +
+						"$.qr_cell.no_bg>$.qr_cell_inner>$.qr_cell_inner_b{border-width:0px;background-color:transparent;}\n" +
 
 						"$.popup_input.qr_input," +
 						"$.popup_input.qr_input:hover," +
-						"$.popup_input.qr_input:focus{width:100%;margin:0px;padding:<<popup.input.padding>>px;resize:none;border:0px hidden;background:transparent;<<css.box-sizing>>:border-box;}\n" +
+						"$.popup_input.qr_input:focus{width:100%;margin:0px;padding:<<popup.input.padding>>px;resize:none;border:0px hidden;background-color:transparent;<<css.box-sizing>>:border-box;}\n" +
 
-						"$.popup_content:not(.packed)>$.qr_row+$.qr_row{margin-top:<<popup.separation>>px;}\n" +
+						"$.qr_content:not(.packed)>$.qr_row+$.qr_row{margin-top:<<popup.separation>>px;}\n" +
 						//}
 
 						//{ Quick reply items
 						"$.qr_row.grab{cursor:move;}\n" +
 
 						"$.qr_submit{cursor:pointer;width:100%;display:block;text-align:center;}\n" +
-						"$.popup_button.qr_submit{background:transparent;border:0px hidden;<<css.box-sizing>>:border-box;padding:0px;margin:0px;}\n" +
+						"$.popup_button.qr_submit{background-color:transparent;border:0px hidden;<<css.box-sizing>>:border-box;padding:0px;margin:0px;}\n" +
 						"$.qr_submit:active{}\n" +
 						"$.qr_submit_text:before{content:\"<<!escape_string:qr.submit.text>>\";}\n" +
 						"$.qr_submit.active>$.qr_submit_text:before{content:\"<<!escape_string:qr.submit.text_active>>\";}\n" +
 						"$.qr_submit.retry>$.qr_submit_text:before{content:\"<<!escape_string:qr.submit.text_retry>>\";}\n" +
 
-						"$.qr_main_label{white-space:nowrap;display:inline-block;}\n" +
+						"$.qr_main_label{white-space:nowrap;display:inline-block;<<!font:qr.label.font>>}\n" +
 						"$.qr_main_label_prefix{cursor:default;color:<<qr.label.color>>;cursor:pointer;}\n" +
 						"$.qr_main_label_prefix:hover{color:<<qr.label.color_hover>>;}\n" +
 						"$.qr_main_label_prefix:before{content:\"<<!escape_string:qr.label.text.quick_reply>>\";}\n" +
@@ -16576,10 +18546,10 @@ var xch = (function () {
 						"$.qr_main_label_target_text:hover{color:<<qr.target.color_hover>>;}\n" +
 						"$.qr_main_label_target_text:after{content:attr(target_thread);}\n" +
 
-						"$.quick_reply.persistent>$.popup_content>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_main_label>$.qr_main_label_prefix:before{content:\"<<!escape_string:qr.label.text.reply>>\";}\n" +
-						"$.quick_reply[target_thread=\"new\"]>$.popup_content>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_main_label>$.qr_main_label_prefix{display:none;}\n" +
-						"$.quick_reply[target_thread=\"current\"]>$.popup_content>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_main_label>$.qr_main_label_target{display:none;}\n" +
-						"$.quick_reply:not([target_thread=\"new\"])>$.popup_content>$.qr_row>$.qr_cell>$.qr_cell_inner>$.qr_main_label>$.qr_main_label_prefix+$.qr_main_label_target{padding-left:<<qr.target.padding.outer>>px;}\n" +
+						"$.qr_main_label.persistent>$.qr_main_label_prefix:before{content:\"<<!escape_string:qr.label.text.reply>>\";}\n" +
+						"$.qr_main_label[target_thread=\"new\"]>$.qr_main_label_prefix{display:none;}\n" +
+						"$.qr_main_label[target_thread=\"current\"]>$.qr_main_label_target{display:none;}\n" +
+						"$.qr_main_label:not([target_thread=\"new\"])>$.qr_main_label_prefix+$.qr_main_label_target{padding-left:<<qr.target.padding.outer>>px;}\n" +
 
 						"$.qr_close{cursor:pointer;color:<<popup.close.color>>;padding:0px <<popup.close.padding>>px 0px <<popup.close.padding>>px;}\n" +
 						"$.qr_close:hover{color:<<popup.close.color_hover>>;}\n" +
@@ -16638,21 +18608,27 @@ var xch = (function () {
 
 						//{ Settings
 						"$.settings{position:absolute;left:0;top:0;bottom:0;right:0;<<!font:settings.font>>}\n" +
-						"$.settings_container{display:table;width:100%;height:100%;}\n" +
+						"$.settings_container{display:table;table-layout:fixed;width:100%;height:100%;}\n" +
 
-						"$.settings_tabs{display:table-row;height:0;width:100%;white-space:nowrap;overflow-x:auto;overflow-y:hidden;}\n" +
-						"$.settings_tabs_inner_1{display:table;width:100%;}\n" +
-						"$.settings_tabs_end_spacing{vertical-align:top;line-height:0;width:0;display:table-cell;<<css.box-sizing>>:border-box;border-bottom:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.style>> <<settings.tabs.border_outer.color>>;}\n" +
+						"$.settings_tabs{display:table-row;height:0;width:100%;white-space:nowrap;}\n" +
+						"$.settings_tabs_inner_1{display:block;overflow-x:auto;overflow-y:hidden;}\n" +
+						"$.settings_tabs_inner_2{display:table;width:100%;}\n" +
+						"$.settings_tabs_end_spacing{position:relative;vertical-align:middle;line-height:normal;width:0;display:table-cell;<<css.box-sizing>>:border-box;border-bottom:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.style>> <<settings.tabs.border_outer.color>>;}\n" +
 						"$.settings_tabs_end_spacing:last-child{width:100%;}\n" +
-						"$.settings_tabs_end_spacing:before{content:\"\";width:4px;display:inline-block;}\n" +
-						"$.settings_tabs_inner_2{display:table-cell;width:0;<<css.box-sizing>>:border-box;}\n" +
+						"$.settings_tabs_end_spacing:not(:last-child):before{content:\"\";width:<<settings.tabs.spacing.outer>>px;display:inline-block;}\n" +
+						"$.settings_tabs_inner_3{display:table-cell;width:0;<<css.box-sizing>>:border-box;}\n" +
+
+						"$.settings_tabs_end_spacing_inner{display:block;text-align:right;line-height:normal;<<css.box-sizing>>:border-box;padding-right:<<settings.tabs.spacing.outer>>px;}\n" +
+						"$.settings_tabs_end_spacing_mode{white-space:nowrap;padding-left:<<settings.tabs.spacing.outer>>px;cursor:pointer;color:<<settings.tabs.mode_select.color>>;}\n" +
+						"$.settings_tabs_end_spacing_mode:hover{color:<<settings.tabs.mode_select.color_hover>>;}\n" +
+						"$.settings_tabs_end_spacing_mode:after{content:attr(value_display);}\n" +
 
 						"$.settings_tab{display:inline-block;<<css.box-sizing>>:border-box;}\n" +
 						"$.settings_tab_inner_1{cursor:pointer;position:relative;vertical-align:bottom;display:inline-block;white-space:normal;}\n" +
 						"$.settings_tab_inner_2{border-width:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.size>>px 0px <<settings.tabs.border_outer.size>>px;border-color:<<settings.tabs.border_outer.color>>;border-style:<<settings.tabs.border_outer.style>>;padding:4px 8px 4px 8px;<<css.border-top-left-radius>>:<<settings.tabs.border_outer.radius>>px;<<css.border-top-right-radius>>:<<settings.tabs.border_outer.radius>>px;overflow:hidden;text-shadow:<<!shadow:settings.tabs.title.shadow>>;<<!font:settings.tabs.title.font>>}\n" +
 						"$.settings_tab:not(.current)>$.settings_tab_inner_1>$.settings_tab_inner_2{border-color:<<settings.tabs.border_outer.color_inactive>>;}\n" +
 						"$.settings_tab.current>$.settings_tab_inner_1>$.settings_tab_inner_2{text-shadow:<<!shadow:settings.tabs.title.current.shadow>>;<<!gradient:settings.tabs.bg>>}\n" +
-						"$.settings_tab+$.settings_tab:before{content:\"\";width:4px;display:inline-block;vertical-align:bottom;border-bottom:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.style>> <<settings.tabs.border_outer.color>>;}\n" +
+						"$.settings_tab:not(.first):before{content:\"\";width:<<settings.tabs.spacing.inner>>px;display:inline-block;vertical-align:bottom;border-bottom:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.style>> <<settings.tabs.border_outer.color>>;}\n" +
 						"$.settings_tab:not(.current)>$.settings_tab_inner_1>$.settings_tab_inner_2{padding-bottom:2px;}\n" +
 						"$.settings_tab:not(.current)>$.settings_tab_inner_1:after{content:\"\";position:absolute;left:0;right:0;bottom:0;border-bottom:<<settings.tabs.border_outer.size>>px <<settings.tabs.border_outer.style>> <<settings.tabs.border_outer.color>>;}\n" +
 
@@ -16667,18 +18643,20 @@ var xch = (function () {
 						"$.settings_section{display:block;}\n" +
 						"$.settings_section.hidden{display:none;}\n" +
 
-						"$.settings_section+$.settings_section:before{content:\"\";margin:<<settings.section.separator.padding.top>>px <<settings.section.separator.padding.right>>px <<settings.section.separator.padding.bottom>>px <<settings.section.separator.padding.left>>px;border-width:<<settings.section.separator.size>>px 0px <<settings.section.separator.size>>px 0px;border-color:<<settings.section.separator.colors.top>>;border-bottom-color:<<settings.section.separator.colors.bottom>>;border-style:<<settings.section.separator.style>>;display:block;}\n" +
+						"$.settings_section:not(.first):before{content:\"\";margin:<<settings.section.separator.padding.top>>px <<settings.section.separator.padding.right>>px <<settings.section.separator.padding.bottom>>px <<settings.section.separator.padding.left>>px;border-width:<<settings.section.separator.size>>px 0px <<settings.section.separator.size>>px 0px;border-color:<<settings.section.separator.colors.top>>;border-bottom-color:<<settings.section.separator.colors.bottom>>;border-style:<<settings.section.separator.style>>;display:block;}\n" +
 						"$.settings_section_title{<<!font:settings.section.label.font>>}\n" +
 						"$.settings_section_content{margin:<<settings.section.padding.top>>px <<settings.section.padding.right>>px <<settings.section.padding.bottom>>px <<settings.section.padding.left>>px;}\n" +
 
-						"$.settings_section_item_label{<<!font:settings.section.item.label.font>>}\n" +
-
 						"$.settings_section_item{position:relative;padding:<<settings.section.item.padding>>px;}\n" +
-						"$.settings_section_item:nth-child(2n+1){background:<<settings.section.item.colors.bg_odd>>;}\n" +
-						"$.settings_section_item:hover{z-index:1;background:<<settings.section.item.colors.bg_hover>>;box-shadow:<<!shadow:settings.section.item.hover_shadow>>;}\n" +
+						"$.settings_section_item.odd{background-color:<<settings.section.item.colors.bg_odd>>;}\n" +
+						"$.settings_section_item.hidden{display:none;}\n" +
+						"$.settings_section_item:hover{z-index:1;background-color:<<settings.section.item.colors.bg_hover>>;box-shadow:<<!shadow:settings.section.item.hover_shadow>>;}\n" +
 						"$.settings_section_item:after{content:\"\";display:block;clear:both;}\n" +
 
-						"$.settings_value_container{color:<<settings.inputs.text_color.normal>>;}\n" +
+						"$.settings_section_item_label{position:relative;<<!font:settings.section.item.label.font>>}\n" +
+						"$.settings_section_item.changed>$.settings_section_item_label:before{position:absolute;right:100%;top:0;content:\"<<settings.section.change_indicator.text>>\";margin:0px <<settings.section.item.padding>>px;color:<<settings.section.change_indicator.color>>;}\n" +
+
+						"$.settings_value_container{position:relative;z-index:1;color:<<settings.inputs.text_color.normal>>;}\n" +
 						"$.settings_section_item.active>$.settings_value_container," +
 						"$.settings_section_item:hover>$.settings_value_container{color:<<settings.inputs.text_color.hover>>;}\n" +
 						"$.settings_value_container:not(.full){float:right;}\n" +
@@ -16686,11 +18664,24 @@ var xch = (function () {
 						"$.settings_value_item{display:block;text-align:right;}\n" +
 
 						"$.settings_value_input{width:<<settings.inputs.textbox.width>>px;}\n" +
+						"$.settings_value_textarea_input{width:100%;height:100px;}\n" +
 
-						"$.settings_value_checkbox_container{direction:rtl;}\n" +
-						"$.settings_value_checkbox_display{vertical-align:middle;}\n" +
-						"$.settings_value_checkbox_container>$.checkbox_input+$.checkbox_indicator+$.settings_value_checkbox_display:after{content:attr(value_off);margin-right:8px;direction:ltr;}\n" +
+						"$.settings_value_text_display{cursor:pointer;}\n" +
+						"$.settings_value_text_display:after{content:attr(display_value);}\n" +
+
+						"$.settings_value_checkbox_container{direction:rtl;display:block;}\n" +
+						"$.settings_value_checkbox_display{vertical-align:middle;line-height:normal;;}\n" +
+						"$.settings_value_checkbox_container>$.checkbox_input+$.checkbox_indicator+$.settings_value_checkbox_display:after{content:attr(value_off);margin-right:<<settings.inputs.checkbox.separation.inner>>px;direction:ltr;}\n" +
 						"$.settings_value_checkbox_container>$.checkbox_input:checked+$.checkbox_indicator+$.settings_value_checkbox_display:after{content:attr(value_on);}\n" +
+
+						"$.settings_value_radio_select_container{}\n" +
+						"$.settings_value_radiobox_container{direction:rtl;display:block;}\n" +
+						"$.settings_value_radio_select_item{display:block;}\n" +
+						"$.settings_value_radio_select_container.single_line>$.settings_value_radio_select_item{display:inline-block;}\n" +
+						"$.settings_value_radio_select_container.single_line>$.settings_value_radio_select_item+$.settings_value_radio_select_item{margin-left:<<settings.inputs.checkbox.separation.outer>>px;}\n" +
+						"$.settings_value_radiobox_display{vertical-align:middle;line-height:normal;}\n" +
+						"$.settings_value_radiobox_container>$.radiobox_input+$.radiobox_indicator+$.settings_value_radiobox_display:after{content:attr(value_display);margin-right:<<settings.inputs.checkbox.separation.inner>>px;direction:ltr;}\n" +
+						"$.settings_section_item:hover>$.settings_value_container>$.settings_value_item>$.settings_value_radio_select_container>$.settings_value_radio_select_item>$.settings_value_radiobox_container>$.radiobox_input:not(:checked)+$.radiobox_indicator+$.settings_value_radiobox_display:after{color:<<settings.inputs.checkbox.colors.non_current>>;}\n" +
 
 						"$.settings_value_slider{text-align:right;}\n" +
 						"$.settings_value_slider_inner_1{position:relative;width:<<settings.inputs.slider.width>>px;height:<<settings.inputs.slider.height>>px;overflow:hidden;}\n" +
@@ -16698,7 +18689,7 @@ var xch = (function () {
 						"$.settings_value_slider_inner_1:after{content:\"\";vertical-align:middle;display:inline-block;width:100%;border-width:<<settings.inputs.slider.line_size>>px 0px <<settings.inputs.slider.line_size>>px 0px;border-style:solid;border-color:<<settings.inputs.slider.colors.line.top>>;border-bottom-color:<<settings.inputs.slider.colors.line.bottom>>;}\n" +
 						"$.settings_value_slider_inner_2{position:absolute;top:0;bottom:0;left:<<settings.inputs.slider.grabber_size>>px;right:<<settings.inputs.slider.grabber_size>>px;}\n" +
 						"$.settings_value_slider_grabber{position:absolute;left:0;top:50%;height:100%;cursor:pointer;}\n" +
-						"$.settings_value_slider_grabber:after{content:\"\";position:absolute;left:-<<settings.inputs.slider.grabber_size>>px;width:<<!double:settings.inputs.slider.grabber_size>>px;top:-50%;height:100%;background:<<settings.inputs.slider.colors.grabber.bg>>;<<css.box-sizing>>:border-box;border:<<settings.inputs.slider.border.size>>px <<settings.inputs.slider.border.style>> <<settings.inputs.slider.border.color>>;<<css.border-radius>>:<<settings.inputs.slider.border.radius>>px;}\n" +
+						"$.settings_value_slider_grabber:after{content:\"\";position:absolute;left:-<<settings.inputs.slider.grabber_size>>px;width:<<!double:settings.inputs.slider.grabber_size>>px;top:-50%;height:100%;background-color:<<settings.inputs.slider.colors.grabber.bg>>;<<css.box-sizing>>:border-box;border:<<settings.inputs.slider.border.size>>px <<settings.inputs.slider.border.style>> <<settings.inputs.slider.border.color>>;<<css.border-radius>>:<<settings.inputs.slider.border.radius>>px;}\n" +
 						"$.settings_value_slider_value_display{}\n" +
 						"$.settings_value_slider_value_display[display_value]:after{content:attr(display_value);}\n" +
 						"$.settings_value_slider_value_display[display_value][display_units]:after{content:attr(display_value) \" \" attr(display_units);}\n" +
@@ -16784,7 +18775,7 @@ var xch = (function () {
 
 						//{ Banner
 						"$.board_info{text-align:center;padding-bottom:<<board_info.padding.bottom>>px;}\n" +
-						"$.board_banner_container{background:transparent;padding-bottom:<<board_info.banner.padding.bottom>>px;}\n" +
+						"$.board_banner_container{background-color:transparent;padding-bottom:<<board_info.banner.padding.bottom>>px;}\n" +
 						"$.board_banner_container.error{display:none;}\n" +
 						"$.board_banner{width:<<board_info.banner.size.width>>px;<<board_info.banner.size.height>>:100px;}\n" +
 						"$.board_info_title{color:<<board_info.title.color>>;<<!font:board_info.title.font>>}\n" +
@@ -16860,7 +18851,7 @@ var xch = (function () {
 
 						// Board list header
 						"body>.boardlist:not(.bottom){margin:0px;padding:<<header.padding>>px;position:relative;left:0;top:0;right:0;z-index:100;<<!font:header.font>>}\n" +
-						"body>.boardlist:not(.bottom):after{content:\"\";position:absolute;background:red;left:0;top:0;width:100%;height:100%;z-index:-1;opacity:<<header.background.opacity>>;box-shadow:<<!shadow:header.background.shadow>>;<<!gradient:header.background.gradient>>}\n" +
+						"body>.boardlist:not(.bottom):after{content:\"\";position:absolute;left:0;top:0;width:100%;height:100%;z-index:-1;opacity:<<header.background.opacity>>;box-shadow:<<!shadow:header.background.shadow>>;<<!gradient:header.background.gradient>>}\n" +
 						"body>.boardlist:not(.bottom)>:not(a){display:none;}\n" +
 
 						// Thread
@@ -16934,8 +18925,8 @@ var xch = (function () {
 						//}
 
 						//{ Special
-						"*::selection{color:<<custom.selection>>;background:<<custom.selection_bg>>;}\n" +
-						"*::-moz-selection{color:<<custom.selection>>;background:<<custom.selection_bg>>;}\n" +
+						"*::selection{color:<<custom.selection>>;background-color:<<custom.selection_bg>>;}\n" +
+						"*::-moz-selection{color:<<custom.selection>>;background-color:<<custom.selection_bg>>;}\n" +
 						//}
 
 						""
@@ -17005,7 +18996,7 @@ var xch = (function () {
 									}
 									if (perc.length == 1) {
 										// Single
-										val = "background:" + val[perc[0]] + ";";
+										val = "background-color:" + val[perc[0]] + ";";
 									}
 									else {
 										perc.sort(function (x, y) { return x - y; });
@@ -17242,6 +19233,30 @@ var xch = (function () {
 						'<svg class="' + this.cls + ' checkbox_svg" xmlns="http://www.w3.org/2000/svg" version="1.1">' +
 						'<g transform="scale(' + sz + ',' + sz + ')">' +
 						'<polygon points="0.75,0.0625 0.9375,0.1875 0.5,0.9375 0.3125,0.9375 0.0625,0.6875 0.1875,0.5 0.375,0.6875"></polygon>' +
+						'</g>' +
+						'</svg>' +
+						'</span>' +
+						'</label>'
+					);
+				},
+				radiobox: function (checked, size) {
+					var s;
+					if (!(size in this.checkbox_settings.sizes)) {
+						size = "normal";
+					}
+					s = this.checkbox_settings.sizes[size];
+
+					var sz = s.box_size;
+
+					return $(
+						'<label class="' + this.cls + ' ' + size + ' radiobox">' +
+						'<input class="' + this.cls + ' radiobox_input" type="checkbox"' + (checked ? ' checked="checked"' : '') + ' />' +
+						'<span class="' + this.cls + ' radiobox_indicator">' +
+						'<svg class="' + this.cls + ' radiobox_svg" xmlns="http://www.w3.org/2000/svg" version="1.1">' +
+						'<g transform="scale(' + sz + ',' + sz + ')" class="' + this.cls + ' radiobox_svg_g">' +
+						'<circle cx="0.5" cy="0.5" r="0.5" class="' + this.cls + ' radiobox_svg_border"></circle>' +
+						'<circle cx="0.5" cy="0.5" r="0.4" class="' + this.cls + ' radiobox_svg_bg"></circle>' +
+						'<circle cx="0.5" cy="0.5" r="0.3" class="' + this.cls + ' radiobox_svg_tick"></circle>' +
 						'</g>' +
 						'</svg>' +
 						'</span>' +
