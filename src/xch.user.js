@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description Extension for 38chan
-// @version     0.3.0.1
+// @version     0.3.1
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -13706,7 +13706,7 @@ var xch = (function () {
 					for (var i = 0; i < html_posts.length; ++i) {
 						var obj = $(html_posts[i]), existing;
 						// Append
-						var post = new xch.Post(this);
+						var post = new xch.Post(this), par;
 						post.init(obj, context);
 						// Check for duplicate
 						if (thread_context.is_new || (existing = this.get_post(post.id)) == null) {
@@ -13719,6 +13719,16 @@ var xch = (function () {
 									is_new: true
 								}
 							]);
+							if ((par = obj.parent())[0] != html[0]) {
+								if (par.hasClass("post")) {
+									par.children(".body").nextAll().remove();
+									if (par.prev().prop("tagName") != "BR") {
+										par.before(document.createElement("br"));
+									}
+								}
+								html.append(document.createElement("br"));
+								html.append(obj);
+							}
 						}
 						else {
 							// Update
@@ -13731,6 +13741,12 @@ var xch = (function () {
 							]);
 						}
 						++parse_queue_length;
+					}
+
+					// Remove unnecessaries
+					if (context.is_new && context.stylize) {
+						// Remove anything buggy
+						html.children(":not(.post):not(.fileinfo):not(br):not(a:nth-of-type(1)):not(img:nth-of-type(1))").remove();
 					}
 
 					// Set
