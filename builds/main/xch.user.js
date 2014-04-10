@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        xch
 // @description Extension for 38chan
-// @version     0.3.1
+// @version     0.3.2
 // @namespace   dnsev
 // @grant       GM_xmlhttpRequest
 // @grant       GM_info
@@ -409,8 +409,13 @@ var xch = (function () {
 			"image/bmp": {
 				name: "BMP Image",
 				extensions: [".bmp"]
+			},
+			"video/webm": {
+				name: "Webm Video",
+				extensions: [".webm"]
 			}
 		},
+		video_mime_types: [ "video/webm" ],
 
 
 		// Helping functions
@@ -6093,7 +6098,8 @@ var xch = (function () {
 					"image/jpeg",
 					"image/gif",
 					"image/png",
-					"image/bmp"
+					"image/bmp",
+					"video/webm"
 				];
 				this.max_file_size = 10 * 1024 * 1024;
 				this.post_submit_value = {
@@ -14236,6 +14242,8 @@ var xch = (function () {
 					}
 				},
 				open_image_preview: function (obj, event_data, timeout) {
+					if (event_data.image.width <= 0 || event_data.image.height <= 0) return;
+
 					// Spawn function
 					var fcn = function () {
 						event_data.open_timer = null;
@@ -14714,6 +14722,7 @@ var xch = (function () {
 						opt = (is_preview ? opt.if_preview : (ev_data.preview == null ? opt.if_closed : opt.if_open));
 						var par = obj.parent();
 						if (par.hasClass("embed")) opt = "embed";
+						if (ev_data.image.width == 0 || ev_data.image.height == 0) opt = "embed";
 
 						// Switch
 						if (opt == "toggle") {
@@ -15096,6 +15105,11 @@ var xch = (function () {
 					var file_info = null, file_image = null, file_extras = null;
 					if (this.image != null) {
 						if (!this.image.deleted) {
+							var file_info_string = this.image.filesize_label[0] + " " + this.image.filesize_label[1];
+							if (this.image.width > 0 && this.image.height > 0) {
+								file_info_string += ", " + this.image.width + style.symbols.mult + this.image.height;
+							}
+
 							file_info = style.e("div", "post_file_info")
 							.append(
 								style.e("a", "post_file_info_file")
@@ -15107,7 +15121,7 @@ var xch = (function () {
 								style.e("span", "post_file_info_attributes")
 								.append(
 									style.e("span")
-									.text(this.image.filesize_label[0] + " " + this.image.filesize_label[1] + ", " + this.image.width + style.symbols.mult + this.image.height)
+									.text(file_info_string)
 								)
 							)
 							.append(
@@ -16001,17 +16015,40 @@ var xch = (function () {
 											})
 										);
 									}
-									link.append(
-										(img = style.e("img", "post_image full"))
-										.attr("title", "")
-										.attr("alt", "")
-										.on("load", { obj: obj }, this_private.on_embedded_post_image_load)
-										.css({
-											width: this.image.width + "px",
-											height: this.image.height + "px"
-										})
-										.attr("src", this.image.url)
-									);
+									var is_video = false;
+									for (var m_type in xch.mime_types) {
+										for (var i = 0; i < xch.mime_types[m_type].extensions.length; ++i) {
+											if (xch.mime_types[m_type].extensions[i] == this.image.extension) {
+												is_video = (xch.video_mime_types.indexOf(m_type) >= 0);
+											}
+										}
+									}
+									if (is_video) {
+										// Video
+										link.append(
+											(img = style.e("video", "post_image full"))
+											.attr("loop", "")
+											.attr("autoplay", "")
+											.on("load", { obj: obj }, this_private.on_embedded_post_image_load)
+											.attr("src", this.image.url)
+										);
+									}
+									else {
+										// Image
+										link.append(
+											(img = style.e("img", "post_image full"))
+											.attr("title", "")
+											.attr("alt", "")
+											.on("load", { obj: obj }, this_private.on_embedded_post_image_load)
+											.attr("src", this.image.url)
+										);
+										if (this.image.width > 0 && this.image.height > 0) {
+											img.css({
+												width: this.image.width + "px",
+												height: this.image.height + "px"
+											});
+										}
+									}
 								}
 							}
 							else {
@@ -16481,7 +16518,7 @@ var xch = (function () {
 						// Details
 						var d = html.find("span.unimportant");
 						var str = $(d.contents()[0]).text();
-						var match = /\((Spoiler\s+Image,\s+)?([0-9.]+)\s+([^,]+),\s+([0-9]+)x([0-9]+),\s*((.+?)\))?/i.exec(str);
+						var match = /\((Spoiler\s+Image,\s+)?([0-9.]+)\s+([^,]+)(?:,\s+([0-9]+)x([0-9]+))?,\s*((.+?)\))?/i.exec(str);
 
 						// Spoiler
 						if (match[1]) this.spoiler = true;
@@ -16491,8 +16528,10 @@ var xch = (function () {
 						this.filesize = Math.round(parseFloat(this.filesize_label[0]) * (this.filesize_label[1] == "MB" ? 1048576 : (this.filesize_label[1] == "KB" ? 1024 : 1) ));
 
 						// Dimensions
-						this.width = parseInt(match[4]);
-						this.height = parseInt(match[5]);
+						if (match[4] != null) {
+							this.width = parseInt(match[4]);
+							this.height = parseInt(match[5]);
+						}
 
 						// Original filename
 						var ds = d.children("span.postfilename");
@@ -16545,15 +16584,17 @@ var xch = (function () {
 					if (scale) {
 						var w = this.thumbnail_width;
 						var h = this.thumbnail_height;
-						scale = Math.max(w / limit.width, h / limit.height);
-						if (scale > 1.0) {
-							w /= scale;
-							h /= scale;
+						if (w > 0 && h > 0) {
+							scale = Math.max(w / limit.width, h / limit.height);
+							if (scale > 1.0) {
+								w /= scale;
+								h /= scale;
+							}
+							obj.css({
+								width: w.toFixed(2) + "px",
+								height: h.toFixed(2) + "px"
+							});
 						}
-						obj.css({
-							width: w.toFixed(2) + "px",
-							height: h.toFixed(2) + "px"
-						});
 					}
 				},
 
@@ -19368,7 +19409,6 @@ var xch = (function () {
 
 
 
-// Run
 xch.script.startup();
 ////////////////////////////////////////////////////////////////////////////////
 //} /Userscript
